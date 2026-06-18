@@ -47,7 +47,7 @@ Two infrastructure lanes run underneath every stage:
 Recommended:
 
 ```bash
-npx openplugin acloudlabs-unofficial/alibabacloud-agent-toolkit --plugin alibabacloud-spec-ops
+npx openplugin aliyun/alibabacloud-agent-toolkit --plugin alibabacloud-spec-ops
 ```
 
 `openplugin` installs the selected plugin into the detected clients (Claude
@@ -182,15 +182,15 @@ All artifacts live under `.aliyun-ai-ops-spec/{requirement-name}/`:
 Recommended:
 
 ```bash
-npx openplugin acloudlabs-unofficial/alibabacloud-agent-toolkit --plugin alibabacloud-spec-ops
+npx openplugin aliyun/alibabacloud-agent-toolkit --plugin alibabacloud-spec-ops
 ```
 
 To target one client only, add a client flag:
 
 ```bash
-npx openplugin acloudlabs-unofficial/alibabacloud-agent-toolkit --plugin alibabacloud-spec-ops --claude
-npx openplugin acloudlabs-unofficial/alibabacloud-agent-toolkit --plugin alibabacloud-spec-ops --codex
-npx openplugin acloudlabs-unofficial/alibabacloud-agent-toolkit --plugin alibabacloud-spec-ops --qoderwork
+npx openplugin aliyun/alibabacloud-agent-toolkit --plugin alibabacloud-spec-ops --claude
+npx openplugin aliyun/alibabacloud-agent-toolkit --plugin alibabacloud-spec-ops --codex
+npx openplugin aliyun/alibabacloud-agent-toolkit --plugin alibabacloud-spec-ops --qoderwork
 ```
 
 ## MCP

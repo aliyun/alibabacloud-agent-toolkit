@@ -1,7 +1,7 @@
 # Alibaba Cloud Agent Toolkit
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Build](https://github.com/acloudlabs-unofficial/alibabacloud-agent-toolkit/actions/workflows/build.yml/badge.svg)](https://github.com/acloudlabs-unofficial/alibabacloud-agent-toolkit/actions/workflows/build.yml)
+[![Build](https://github.com/aliyun/alibabacloud-agent-toolkit/actions/workflows/build.yml/badge.svg)](https://github.com/aliyun/alibabacloud-agent-toolkit/actions/workflows/build.yml)
 [![Status](https://img.shields.io/badge/status-initializing-yellow.svg)](#current-status)
 
 Help AI coding agents build, deploy, and operate applications on Alibaba Cloud.
@@ -83,7 +83,7 @@ brew install aliyun-cli
 ### One-command install (recommended)
 
 ```bash
-npx openplugin acloudlabs-unofficial/alibabacloud-agent-toolkit
+npx openplugin aliyun/alibabacloud-agent-toolkit
 ```
 
 Automatically detects installed clients (Claude Code, Codex, QoderWork), lets you pick which plugins to install, and configures everything.
@@ -93,7 +93,7 @@ Automatically detects installed clients (Claude Code, Codex, QoderWork), lets yo
 #### Codex
 
 ```text
-codex plugin marketplace add acloudlabs-unofficial/alibabacloud-agent-toolkit
+codex plugin marketplace add aliyun/alibabacloud-agent-toolkit
 ```
 
 Then open Codex `/plugins` and install `alibabacloud-core` and/or `alibabacloud-spec-ops`.
@@ -101,7 +101,7 @@ Then open Codex `/plugins` and install `alibabacloud-core` and/or `alibabacloud-
 #### Claude Code
 
 ```text
-/plugin marketplace add acloudlabs-unofficial/alibabacloud-agent-toolkit
+/plugin marketplace add aliyun/alibabacloud-agent-toolkit
 /plugin install alibabacloud-core@alibabacloud-agent-toolkit
 /plugin install alibabacloud-spec-ops@alibabacloud-agent-toolkit
 /reload-plugins

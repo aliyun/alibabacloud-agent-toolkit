@@ -14,7 +14,7 @@ This plugin includes:
 Recommended:
 
 ```bash
-npx openplugin acloudlabs-unofficial/alibabacloud-agent-toolkit --plugin alibabacloud-core
+npx openplugin aliyun/alibabacloud-agent-toolkit --plugin alibabacloud-core
 ```
 
 `openplugin` installs the selected plugin into the detected clients (Claude
@@ -23,9 +23,9 @@ Code, Codex CLI, QoderWork) and configures client-specific hooks/MCP wiring.
 To target one client only, add a client flag:
 
 ```bash
-npx openplugin acloudlabs-unofficial/alibabacloud-agent-toolkit --plugin alibabacloud-core --claude
-npx openplugin acloudlabs-unofficial/alibabacloud-agent-toolkit --plugin alibabacloud-core --codex
-npx openplugin acloudlabs-unofficial/alibabacloud-agent-toolkit --plugin alibabacloud-core --qoderwork
+npx openplugin aliyun/alibabacloud-agent-toolkit --plugin alibabacloud-core --claude
+npx openplugin aliyun/alibabacloud-agent-toolkit --plugin alibabacloud-core --codex
+npx openplugin aliyun/alibabacloud-agent-toolkit --plugin alibabacloud-core --qoderwork
 ```
 
 ## MCP

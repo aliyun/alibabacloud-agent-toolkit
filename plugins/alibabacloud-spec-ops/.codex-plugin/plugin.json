@@ -5,8 +5,8 @@
   "author": {
     "name": "Alibaba Cloud"
   },
-  "homepage": "https://github.com/acloudlabs-unofficial/alibabacloud-agent-toolkit",
-  "repository": "https://github.com/acloudlabs-unofficial/alibabacloud-agent-toolkit",
+  "homepage": "https://github.com/aliyun/alibabacloud-agent-toolkit",
+  "repository": "https://github.com/aliyun/alibabacloud-agent-toolkit",
   "license": "Apache-2.0",
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
@@ -20,6 +20,6 @@
       "Read",
       "Write"
     ],
-    "websiteURL": "https://github.com/acloudlabs-unofficial/alibabacloud-agent-toolkit"
+    "websiteURL": "https://github.com/aliyun/alibabacloud-agent-toolkit"
   }
 }

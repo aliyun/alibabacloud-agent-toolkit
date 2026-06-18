@@ -1,18 +1,19 @@
 # Contributing
 
-Thank you for your interest in this project.
-
-This repository is currently in an initialization phase. The scaffold is available for internal iteration, but contribution policy and review workflow are still being defined.
+Thank you for your interest in contributing to alibabacloud-agent-toolkit!
 
 ## Reporting Issues
 
 - Use GitHub Issues to report bugs or propose enhancements.
 - Include reproduction steps, environment details, and the affected plugin or directory when possible.
 
-## Scope
+## Pull Requests
 
-- Prefer focused changes that improve Alibaba Cloud plugin scaffolding, validation, documentation, or shared repository tooling.
+- Fork the repository and create a feature branch from `main`.
+- Keep changes focused: one PR per feature or fix.
+- Prefer changes that improve Alibaba Cloud plugin scaffolding, validation, documentation, or shared repository tooling.
 - Avoid introducing another cloud provider's implementation details or references into this repository.
+- Ensure all existing tests pass before submitting.
 
 ## Security
 

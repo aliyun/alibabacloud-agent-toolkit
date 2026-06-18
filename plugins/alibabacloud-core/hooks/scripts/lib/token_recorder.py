@@ -101,7 +101,7 @@ def _scrub_usage_claude(usage: dict) -> dict:
     return {k: v for k, v in usage.items() if k in keep}
 
 
-# Normalized token contract used by stop_handler and cloudspec:
+# Normalized token contract used by stop_handler:
 #   input_uncached + input_cached + input_creation = total prompt input.
 # Claude usage fields: input_tokens excludes cache_read/cache_creation.
 # Codex usage fields: input_tokens includes cached_input_tokens, so subtract cached
