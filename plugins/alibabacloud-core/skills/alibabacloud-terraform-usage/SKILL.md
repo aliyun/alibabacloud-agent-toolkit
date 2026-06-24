@@ -8,7 +8,7 @@ description: >
   config, generate HCL for ECS, Terraform code for VPC, alicloud infrastructure
   as code, Terraform resource for RDS, modify Terraform configuration, alicloud
   provider Terraform, terraform best practices.
-allowed-tools: "mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___CallCLI,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___SearchDocument,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___ReadDocument"
+allowed-tools: "mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___CallCLI,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___SearchDocuments,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GetDocument"
 ---
 
 # Alibaba Cloud Terraform Code Generator
@@ -34,8 +34,8 @@ user to the `alibabacloud-spec-ops` plugin instead of this single-shot skill.
 
 1. **ONLY use tools from the `alibabacloud-core` MCP server.** The permitted tools are:
    - `AlibabaCloud___CallCLI` — Execute IaCService CLI commands to query Terraform product/resource metadata
-   - `AlibabaCloud___SearchDocument` — Search Alibaba Cloud documentation by keyword
-   - `AlibabaCloud___ReadDocument` — Read a specific document by URL (must use URLs obtained from `SearchDocument`)
+   - `AlibabaCloud___SearchDocuments` — Search Alibaba Cloud documentation by keyword
+   - `AlibabaCloud___GetDocument` — Read a document by `doc_id` (preferred) or URL (use `doc_id` or URLs obtained from `SearchDocuments`)
 2. **Do NOT run `terraform plan`, `terraform apply`, or any other Terraform commands** via the shell. Generated HCL code is for the user to review and apply themselves.
 3. **Always remind the user to review the generated HCL** before running `terraform apply`, especially when resources involve costs, data deletion, or security-sensitive configurations.
 
@@ -79,10 +79,10 @@ Call `AlibabaCloud___CallCLI` with `aliyun iacservice get-resource-type --resour
 
 Documentation lookup is a two-step process:
 
-1. **Search**: Use `AlibabaCloud___SearchDocument` with the resource type name (e.g., `alicloud_vpc`) to find relevant documentation URLs.
-2. **Read**: Use `AlibabaCloud___ReadDocument` with a URL from the search results to get full content.
+1. **Search**: Use `AlibabaCloud___SearchDocuments` with the resource type name (e.g., `alicloud_vpc`) to find relevant documentation.
+2. **Read**: Use `AlibabaCloud___GetDocument` with the `doc_id` (preferred) or URL from the search results to get full content.
 
-**Important:** Always search first to get valid URLs. Do NOT pass arbitrary URLs to `ReadDocument`.
+**Important:** Always search first to get valid `doc_id` or URLs. Do NOT pass arbitrary URLs to `GetDocument`.
 
 After reading documentation:
 
@@ -128,8 +128,8 @@ Present the generated HCL with:
 
 When attribute definitions or constraints are unclear:
 
-1. Use `AlibabaCloud___SearchDocument` with relevant keywords (resource type, attribute name, error message)
-2. Use `AlibabaCloud___ReadDocument` with the URL from search results
+1. Use `AlibabaCloud___SearchDocuments` with relevant keywords (resource type, attribute name, error message)
+2. Use `AlibabaCloud___GetDocument` with the `doc_id` or URL from search results
 3. Cross-reference the schema from `get-resource-type` with the documentation
 4. Provide the user with links to official documentation for edge cases
 

@@ -266,9 +266,9 @@ After understanding the change request, proceed to **Phase 1 (Clarify)** with th
 | **Purpose** | What will this infrastructure run? | — |
 | **Scale** | Expected traffic / users / data volume? | — |
 | **Region** | Which region to deploy? Why? | `ListProductRegions` for availability |
-| **Compute** | Any preferences for compute resources? | `SearchDocument` for instance family recommendations |
+| **Compute** | Any preferences for compute resources? | `SearchDocuments` for instance family recommendations |
 | **Network** | Need public internet access? What topology? | — |
-| **Storage** | How much data? Access patterns? | `SearchDocument` for storage type selection |
+| **Storage** | How much data? Access patterns? | `SearchDocuments` for storage type selection |
 | **Security** | Compliance requirements? Who needs access? | — |
 | **Budget** | Cost constraints? Pay-as-you-go or subscription? | — |
 | **Availability** | SLA requirements? Need disaster recovery? | — |
@@ -282,7 +282,7 @@ When the user answers key questions, **immediately** use MCP tools to validate i
 AlibabaCloud___CallCLI: "aliyun ecs DescribeZones --region cn-hangzhou"
 
 # User says "need MySQL database" → query instance specifications
-AlibabaCloud___SearchDocument: query="RDS MySQL instance type recommendation"
+AlibabaCloud___SearchDocuments: query="RDS MySQL instance type recommendation"
 
 # User says "need object storage" → query OSS capabilities
 AlibabaCloud___ListApis: product="Oss", filter="Bucket"
@@ -357,7 +357,7 @@ For EACH resource the user needs, confirm the **minimum boundary specs** that ca
 Use MCP to get real-time pricing for the options you present:
 
 ```
-AlibabaCloud___SearchDocument: query="ECS instance type ecs.c6.large pricing"
+AlibabaCloud___SearchDocuments: query="ECS instance type ecs.c6.large pricing"
 ```
 
 #### Step 2: Four-Pillar Quick Questions (4 questions, 1 round)
@@ -742,7 +742,7 @@ After the user selects an option, produce complete design:
 AlibabaCloud___CallCLI: "aliyun ecs DescribeInstanceTypes --InstanceTypeFamily ecs.c6"
 
 # Verify RDS specification
-AlibabaCloud___SearchDocument: query="RDS MySQL instance type mysql.n2.small.2c specification"
+AlibabaCloud___SearchDocuments: query="RDS MySQL instance type mysql.n2.small.2c specification"
 
 # Find latest images
 AlibabaCloud___CallCLI: "aliyun ecs DescribeImages --ImageOwnerAlias system --OSType linux"

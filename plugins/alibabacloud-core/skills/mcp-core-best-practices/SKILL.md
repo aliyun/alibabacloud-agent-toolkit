@@ -6,7 +6,7 @@ description: >
   scripted execution, async task polling, cross-account access, and safety policy
   configuration. Referenced by other alibabacloud-core skills as the canonical
   guide for MCP Core interactions.
-allowed-tools: "mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___CallCLI,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___SearchApis,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GetApiDefinition,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___ListApis,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___ListProductRegions,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GenerateCLICommand,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___ListProducts,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___SearchDocument,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___ReadDocument,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___RunScript,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GetTask"
+allowed-tools: "mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___CallCLI,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___SearchApis,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GetApiDefinition,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___ListApis,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___ListProductRegions,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GenerateCLICommand,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___ListProducts,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___SearchDocuments,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GetDocument,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GetDocumentTree,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GrepDocuments,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___RunScript,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GetTask"
 ---
 
 # Alibaba Cloud MCP Core Best Practices
@@ -26,8 +26,10 @@ APIs without requiring pre-selection of specific operations.
 | `AlibabaCloud___ListProductRegions` | List regions where a product is available |
 | `AlibabaCloud___GenerateCLICommand` | Generate a CLI command from API definition + parameters |
 | `AlibabaCloud___ListProducts` | List all Alibaba Cloud products |
-| `AlibabaCloud___SearchDocument` | Search Alibaba Cloud documentation by keyword |
-| `AlibabaCloud___ReadDocument` | Read a specific documentation page by URL |
+| `AlibabaCloud___SearchDocuments` | Search Alibaba Cloud official documentation by keyword, with optional product/language/site filters |
+| `AlibabaCloud___GetDocument` | Get full Markdown content of a document by `doc_id` (preferred) or URL |
+| `AlibabaCloud___GetDocumentTree` | Browse a product's document directory tree to discover available docs |
+| `AlibabaCloud___GrepDocuments` | Search within a specific product's documents by keyword pattern |
 | `AlibabaCloud___RunScript` | Start a restricted Python task with structured Alibaba Cloud OpenAPI access |
 | `AlibabaCloud___GetTask` | Long-poll a `RunScript` task until approval, execution, or failure reaches a terminal state |
 
@@ -222,8 +224,16 @@ directly instead of MCP.
 
 ## Documentation Access
 
-- `AlibabaCloud___SearchDocument`: Find relevant docs by keyword.
-- `AlibabaCloud___ReadDocument`: Read full content of a known documentation URL.
+- `AlibabaCloud___SearchDocuments`: Find relevant docs by keyword. Supports
+  `product`, `limit`, `website`, and `language` filters.
+- `AlibabaCloud___GetDocument`: Read full content by `doc_id` (preferred) or
+  URL. Supports `max_length` to cap response size, plus `website` and `language`.
+- `AlibabaCloud___GetDocumentTree`: Browse a product's doc tree by alias
+  (e.g. `ecs`, `oss`). Use to discover what documents exist, then fetch via
+  `GetDocument`.
+- `AlibabaCloud___GrepDocuments`: Search within a specific product's docs by
+  keyword pattern (matches title/description). Useful when you know the product
+  but not the exact document name.
 
 Use these to verify behavior, understand quotas, or find configuration guides
 that are not captured in API definitions alone.
