@@ -52,8 +52,6 @@ Scripts must use `call_cli(product, version, action, params)`. Direct SDK instan
 ❌ `from alibabacloud_ecs20140526.client import Client`
 
 ### DYN-BLOCK-001: Blocked High-Risk Read APIs
-
-APIs returning credentials or secrets are blocked even if read-only:
 `ram.ListAccessKeys`, `sts.AssumeRole`, `kms.GetSecretValue`, `ecs.DescribeUserData`.
 
 ### DYN-BLOCK-002: Forbidden CLI Meta Products
@@ -66,8 +64,9 @@ Dangerous builtins are unavailable at runtime: `open`, `exec`, `eval`, `__import
 
 ### DYN-WRITE-001: Write Operations Allowed
 
-Write/delete/update calls execute normally. Do NOT add confirmation prompts — HITL is handled
-by the RunScript runtime downstream.
+Write/delete/update calls execute normally via `call_cli()`. The RunScript runtime intercepts
+write operations and presents them to the user for approval (HITL) before execution. The script
+itself should NOT add confirmation prompts (`input()`, etc.) — the runtime handles this.
 
 ### DYN-OUTPUT-001: Output via result Variable
 
@@ -101,7 +100,11 @@ for rid, resp in zip(region_ids, responses):
 
 ## Remote Validation API
 
-`POST {VALIDATE_REMOTE_URL}/api/script-recommend/validate` with `{"source": "..."}`.
+`POST {VALIDATE_REMOTE_URL}/api/script-recommend/validate`
+
+Headers: `Content-Type: application/json`, `User-Agent: AlibabaCloud-Agent-Skills/alibabacloud-script-recommend`
+
+Body: `{"source": "..."}`
 
 Response on failure:
 

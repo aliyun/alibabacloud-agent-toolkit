@@ -9,6 +9,11 @@ triggers: >
   生成Python脚本, Python脚本, 阿里云脚本, RunScript, 云资源脚本,
   generate Python script, write Python code, cloud automation script,
   Python代码推荐, script recommend
+license: Apache-2.0
+metadata:
+  domain: aliyun-runscript
+  owner: sdk-team
+  contact: sdk-team@alibabacloud.com
 allowed-tools: "mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___SearchApis,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GetApiDefinition,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___ListApis,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___ListProducts"
 ---
 
@@ -20,35 +25,50 @@ python-safety validation before output. Do not execute the script unless the use
 
 ## Scope Check Before You Start
 
-This skill generates **single-purpose Python scripts for the RunScript sandbox**. If the
-request is an **operational pattern** — batch ops, audits, rotations, scheduled cleanup —
-invoke `alibabacloud-find-skills` first. Fall back only after `find-skills` returns no match.
+- **RunScript sandbox scripts** (this skill): generates `call_cli()`-based Python for the
+  RunScript sandbox — no SDK imports, no credentials, no local execution.
+- **SDK project code** → `alibabacloud-sdk-usage`: generates typed/generic SDK code with
+  imports, credential providers, and dependency management for user projects.
+- **Operational patterns** (batch ops, audits, rotations) → `alibabacloud-find-skills` first.
 
 ## Workflow
 
-1. Split the request into atomic cloud operations. For well-known products (ECS, VPC, SLB,
-   RDS, OSS, CDN, RAM, STS, NAS, ESS, DNS, KMS, ACK/CS), choose APIs from model knowledge.
-   Skip to step 4 if all APIs and parameters are known.
+1. Split the request into atomic cloud operations. For each operation, verify the product,
+   API name, version, and required parameters using MCP tools — do not guess.
 
-2. Search APIs only for operations whose API you do not know — not as a confirmation step
-   for known APIs. Use `AlibabaCloud___SearchApis`. Keep to one parallel batch.
+2. Search APIs for operations whose API you are uncertain about. Use
+   `AlibabaCloud___SearchApis` with a natural language description. Keep to one parallel batch.
 
-3. Read API definitions only for APIs whose parameters you are unsure about. Use
-   `AlibabaCloud___GetApiDefinition` with product, action, and version.
+3. Read API definitions to confirm exact parameter names and types. Use
+   `AlibabaCloud___GetApiDefinition` with product, action, and version. Do not skip this
+   step for unfamiliar APIs.
 
 4. Generate one Python script body following the Sandbox Contract and Script Patterns below.
-   Prefer model knowledge over tool calls. When multiple tool calls are needed, batch them in
-   parallel. Never repeat the same tool call with the same arguments.
+   When multiple tool calls are needed, batch them in parallel. Never repeat the same tool
+   call with the same arguments.
 
-5. Write to `/tmp/aliyun-runscript.py` and validate via remote API:
+5. Write to `/tmp/aliyun-runscript.py` and validate:
 
 ```bash
-curl -X POST https://troubleshoot-server.example.com/api/script-recommend/validate \
-  -H "Content-Type: application/json" \
-  -d "{\"source\": $(cat /tmp/aliyun-runscript.py | jq -Rs .)}"
+SKILL_BASE="/absolute/path/from/skill/launch/message"
+cat > /tmp/aliyun-runscript.py <<'PYEOF'
+<script body here>
+PYEOF
+python3 -c "
+import json, sys, urllib.request
+source = open('/tmp/aliyun-runscript.py').read()
+req = urllib.request.Request(
+    '${VALIDATE_REMOTE_URL}/api/script-recommend/validate',
+    json.dumps({'source': source}).encode(),
+    {'Content-Type': 'application/json',
+     'User-Agent': 'AlibabaCloud-Agent-Skills/alibabacloud-script-recommend'})
+resp = json.loads(urllib.request.urlopen(req, timeout=30).read())
+print(json.dumps(resp, indent=2, ensure_ascii=False))
+sys.exit(0 if resp.get('passed') else 1)
+"
 ```
 
-Response: `{"passed": true, "violations": []}` or `{"passed": false, "violations": [{"rule_id": "SEC-4001", "line": 1, "message": "..."}]}`.
+`VALIDATE_REMOTE_URL` must be set in the environment before running this skill.
 
 6. If validation fails, fix ONLY the listed violations and re-validate. Maximum 3 rounds.
    If violations persist, show them to the user.
@@ -64,19 +84,19 @@ for full definitions with examples.
 | Category | Rule |
 |----------|------|
 | **Imports** | Do not write `import` statements. Sandbox pre-imports: `asyncio`, `collections`, `csv`, `dataclasses`, `datetime`, `decimal`, `enum`, `fractions`, `functools`, `itertools`, `json`, `math`, `re`, `statistics`, `string`, `time`, `typing`, `uuid`. |
-| **API calls** | Use ONLY `call_cli(product, action, params, version=None, region=None)`. Pre-injected. No SDK clients, no HTTP requests, no subprocess. |
+| **API calls** | Use ONLY `call_cli(product, version, action, params)`. Pre-injected. No SDK clients, no HTTP requests, no subprocess. |
 | **Output** | Assign final data to `result` (dict or list). No `print()`. |
 | **Forbidden** | `os`, `subprocess`, `socket`, `requests`, `eval`, `exec`, `compile`, `getattr`, `setattr`, `globals`, `input`, `breakpoint`, `__import__`, dunder chains. |
 | **Blocked APIs** | Credential-returning APIs (`ram.ListAccessKeys`, `sts.AssumeRole`, `kms.GetSecretValue`). CLI meta products (`configure`, `plugin`, `ossutil`). |
-| **Other** | `time.sleep()` ≤ 30s. No comments. Write ops are fine — HITL handled by runtime. |
+| **Other** | `time.sleep()` ≤ 30s. No comments. Write/delete/update ops execute directly — the RunScript runtime intercepts write operations and presents them to the user for approval (HITL) before execution. The script itself should not add confirmation prompts. |
 
 ## Script Patterns
 
 **Sequential** (dependent calls):
 
 ```python
-vpc = await call_cli(product="Vpc", action="CreateVpc", params={"RegionId": region_id, "CidrBlock": "10.0.0.0/8"})
-vsw = await call_cli(product="Vpc", action="CreateVSwitch", params={"VpcId": vpc["VpcId"], "CidrBlock": "10.0.0.0/16", "ZoneId": "cn-hangzhou-a"})
+vpc = await call_cli(product="Vpc", version="2016-04-28", action="CreateVpc", params={"RegionId": region_id, "CidrBlock": "10.0.0.0/8"})
+vsw = await call_cli(product="Vpc", version="2016-04-28", action="CreateVSwitch", params={"VpcId": vpc["VpcId"], "CidrBlock": "10.0.0.0/16", "ZoneId": "cn-hangzhou-a"})
 result = {"VpcId": vpc["VpcId"], "VSwitchId": vsw["VSwitchId"]}
 ```
 
@@ -85,7 +105,7 @@ result = {"VpcId": vpc["VpcId"], "VSwitchId": vsw["VSwitchId"]}
 ```python
 items, page = [], 1
 while True:
-    resp = await call_cli(product="Ecs", action="DescribeInstances", params={"RegionId": region_id, "PageNumber": page, "PageSize": 100})
+    resp = await call_cli(product="Ecs", version="2014-05-26", action="DescribeInstances", params={"RegionId": region_id, "PageNumber": page, "PageSize": 100})
     batch = resp.get("Instances", {}).get("Instance", [])
     items.extend(batch)
     if len(batch) < 100:
@@ -98,7 +118,7 @@ result = items
 
 ```python
 responses = await asyncio.gather(*[
-    call_cli(product="Ecs", action="DescribeInstances", params={"RegionId": rid})
+    call_cli(product="Ecs", version="2014-05-26", action="DescribeInstances", params={"RegionId": rid})
     for rid in region_ids
 ], return_exceptions=True)
 result = {rid: r if isinstance(r, dict) else {"error": str(r)} for rid, r in zip(region_ids, responses)}
