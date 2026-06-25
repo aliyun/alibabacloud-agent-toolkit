@@ -3,7 +3,7 @@ name: alibabacloud-agent-toolkit-precheck
 description: >
   Pre-installation environment check and setup for Alibaba Cloud Agent Toolkit.
   Verifies and installs prerequisites: uv, Alibaba Cloud CLI (aliyun),
-  CLI authentication, CLI plugins (openapiexplorer, sts, ramoauth), MCP Server Core,
+  CLI authentication, CLI plugins (openapiexplorer, sts), MCP Server Core,
   and bearer token exchange. Use when: alibabacloud agent toolkit install,
   environment check, prerequisite check, setup alibabacloud, precheck,
   plugin install, toolkit setup, mcp core setup, aliyun CLI setup.
@@ -163,16 +163,13 @@ aliyun configure list
 
 ## Step 4: CLI Plugins {#step-4-cli-plugins}
 
-Three CLI plugins are required. Check each and install any that are missing.
+Two CLI plugins are required. Check each and install any that are missing.
 
 ### Check (Auto)
-
-Run all three checks:
 
 ```bash
 aliyun plugin show --name openapiexplorer
 aliyun plugin show --name sts
-aliyun plugin show --name ramoauth
 ```
 
 - **All pass** → each outputs plugin metadata. Proceed to Step 5.
@@ -185,7 +182,6 @@ Install only the missing plugins. Show the command and **wait for approval**:
 ```bash
 aliyun plugin install --name openapiexplorer
 aliyun plugin install --name sts
-aliyun plugin install --name ramoauth
 ```
 
 After installation, re-run the check commands to verify.
@@ -313,7 +309,7 @@ Environment check complete — all prerequisites satisfied:
   ✓ uv installed
   ✓ Alibaba Cloud CLI installed
   ✓ CLI authenticated (as <AccountId / UserName>)
-  ✓ CLI plugins installed (openapiexplorer, sts, ramoauth)
+  ✓ CLI plugins installed (openapiexplorer, sts)
   ✓ MCP Server Core provisioned
   ✓ Bearer token exchange verified
 ```
