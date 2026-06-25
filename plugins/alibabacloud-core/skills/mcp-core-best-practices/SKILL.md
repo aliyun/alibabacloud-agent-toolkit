@@ -3,10 +3,11 @@ name: mcp-core-best-practices
 description: >
   Shared reference for using Alibaba Cloud OpenAPI MCP Server Core effectively.
   Covers tool usage patterns, API exploration workflow, CLI command generation,
-  scripted execution, async task polling, cross-account access, and safety policy
+  scripted execution, async task polling, Infrastructure as Code (RunIaC),
+  cross-account access, and safety policy
   configuration. Referenced by other alibabacloud-core skills as the canonical
   guide for MCP Core interactions.
-allowed-tools: "mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___CallCLI,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___SearchApis,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GetApiDefinition,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___ListApis,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___ListProductRegions,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GenerateCLICommand,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___ListProducts,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___SearchDocuments,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GetDocument,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GetDocumentTree,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GrepDocuments,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___RunScript,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GetTask"
+allowed-tools: "mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___CallCLI,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___RunIaC,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GetPresignedUrl,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___SearchApis,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GetApiDefinition,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___ListApis,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___ListProductRegions,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GenerateCLICommand,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___ListProducts,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___SearchDocuments,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GetDocument,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GetDocumentTree,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GrepDocuments,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___RunScript,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GetTask"
 ---
 
 # Alibaba Cloud MCP Core Best Practices
@@ -32,6 +33,8 @@ APIs without requiring pre-selection of specific operations.
 | `AlibabaCloud___GrepDocuments` | Search within a specific product's documents by keyword pattern |
 | `AlibabaCloud___RunScript` | Start a restricted Python task with structured Alibaba Cloud OpenAPI access |
 | `AlibabaCloud___GetTask` | Long-poll a `RunScript` task until approval, execution, or failure reaches a terminal state |
+| `AlibabaCloud___RunIaC` | Run Terraform / IaC (`action`=plan/apply/destroy) to provision or tear down a multi-resource stack; plan-before-apply, sync or async, HITL approval |
+| `AlibabaCloud___GetPresignedUrl` | Get a time-limited OSS presigned URL (default upload) + `presignToken` to feed `RunIaC`; no credentials exposed |
 
 ## Standard Workflow
 
@@ -201,6 +204,64 @@ For Resource Directory member accounts, pass additional parameters to
 Priority: `x_assume_role_arn` > `x_assume_account_id` + `x_assume_role_name` >
 default configuration.
 
+## Infrastructure as Code (RunIaC)
+
+`AlibabaCloud___RunIaC` runs Terraform/IaC so a single call can stand up several
+interdependent resources, then later tear them down. It takes `action`
+(`plan` default / `apply` / `destroy`), `code` (only on `plan`) or `presignToken`,
+and `previousProcessId`. Prefer it over `CallCLI` whenever the request is more than
+a one-off read or single mutation.
+
+### When to use RunIaC vs CallCLI
+
+| Use `RunIaC` | Use `CallCLI` |
+|--------------|---------------|
+| Multiple resources at once (e.g. VPC + vSwitch + ECS) | A single, one-shot query or describe |
+| Resources have dependencies / ordering | A stateless mutation that needs no rollback |
+| You want a destroyable, tracked stack | No lifecycle to manage afterward |
+| Repeatable, idempotent provisioning | Quick fact lookup or `--region` check |
+
+If you find yourself chaining several `CallCLI` create calls and worrying about
+cleanup, switch to `RunIaC`.
+
+### Plan, apply, destroy
+
+1. **Plan**: send `action=plan` with `code` (or `presignToken`). It returns a
+   `processId` plus the diff and `status=Planned`. Surface the diff to the user.
+2. **Apply**: send `action=apply` with `previousProcessId` (no `code`) to run the
+   exact plan that was reviewed; template and state stay identical. If the plan has
+   changes, the call may return `ApprovalPending` + `approvalReqId` — wait for
+   approval, do not retry. **Remind the user to review the plan first** when
+   resources involve cost, data deletion, or security-sensitive config.
+3. **Destroy**: send `action=destroy` with `previousProcessId` to release the
+   resources from that plan.
+
+### Async execution + polling
+
+`RunIaC` returns a `processId` immediately and runs the task in the background.
+Use `nextAction` to drive follow-up: `CallGetTask` / `CallGetTaskAgain` means poll
+`AlibabaCloud___GetTask` with that `processID` until a terminal state. Plan rests
+at `Planned`; apply ends at `Succeeded` (or `Failed`). Read the structured outputs
+from the apply / `GetTask` result — do not block waiting on the first call.
+
+### Tearing down
+
+To release resources, call `RunIaC` with `action=destroy` and the
+`previousProcessId` of the plan that created them.
+
+### Long-running / timeout handling
+
+For complex or slow code, keep polling `AlibabaCloud___GetTask` by `processID`
+until terminal instead of one long blocking wait; do not loop aggressively (a
+few-second cadence is enough).
+
+### Reading structured outputs
+
+Both plan and apply emit structured output. Read the plan to confirm the resource
+set before applying, and read the apply / `GetTask` result outputs (e.g. region,
+zone, instance name, public IP) to report results — do not guess at IDs/addresses;
+pull them from the returned outputs.
+
 ## CLI Command Constraints
 
 When using `AlibabaCloud___CallCLI`, the following are NOT supported:
@@ -214,6 +275,21 @@ When using `AlibabaCloud___CallCLI`, the following are NOT supported:
 
 For commands that need local file access (e.g., `ossutil cp`), use the Bash tool
 directly instead of MCP.
+
+## File Operations
+
+The MCP server is remote, so `CallCLI` rejects local paths (`file://`, `fileb://`)
+and tools never see your filesystem. To move bytes in — IaC bundles or large
+script inputs — stage them in OSS with `AlibabaCloud___GetPresignedUrl`.
+It defaults to upload (`PUT`) against a platform-managed bucket and returns a
+`presignToken`; the URL carries its own auth, so credentials are never embedded in
+commands. Download (`GET`) is only for the user's own OSS bucket.
+
+Typical flow:
+
+1. Call `GetPresignedUrl` (default upload) to get an upload URL + `presignToken`.
+2. `PUT` the local bundle to that URL.
+3. Pass the `presignToken` to `RunIaC` instead of inlining `code`.
 
 ## Region Handling
 
@@ -245,6 +321,11 @@ that are not captured in API definitions alone.
 - **AccessDenied / Forbidden**: Verify RAM permissions for the current identity.
 - **Throttling**: Retry with backoff; do not loop aggressively.
 - **RegionNotSupported**: Use `ListProductRegions` to find valid regions.
+- **RunIaC apply fails**: Read the returned `status` and result; fix the HCL, plan
+  again, and apply the new `previousProcessId`. To roll back, `action=destroy` with
+  the prior `previousProcessId` rather than chaining manual `CallCLI` cleanup.
+- **RunIaC long-running timeout**: Poll `AlibabaCloud___GetTask` by `processID`
+  until terminal; do not retry the whole apply (re-bind via `previousProcessId`).
 - **RunScript ValidationFailed**: Fix unsafe or invalid Python authoring patterns
   before submitting a new `RunScript`.
 - **RunScript BLK-4002**: Add a reachable module-level `call_cli()`; pure Python
