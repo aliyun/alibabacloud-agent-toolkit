@@ -1,11 +1,10 @@
 ---
-name: alibabacloud-agent-toolkit-precheck
+name: alibabacloud-agent-toolkit-install
 description: >
-  Pre-installation environment check and setup for Alibaba Cloud Agent Toolkit.
-  Verifies and installs prerequisites: uv, Alibaba Cloud CLI (aliyun),
-  CLI authentication, CLI plugins (openapiexplorer, sts), MCP Server Core,
-  and bearer token exchange. Use when: alibabacloud agent toolkit install,
-  environment check, prerequisite check, setup alibabacloud, precheck,
+  Install Alibaba Cloud Agent Toolkit end-to-end: verify and set up prerequisites
+  (uv, Alibaba Cloud CLI, authentication, CLI plugins, MCP Server Core, bearer
+  token exchange), then install the toolkit via openplugin. Use when: alibabacloud
+  agent toolkit install, environment check, prerequisite check, setup alibabacloud,
   plugin install, toolkit setup, mcp core setup, aliyun CLI setup.
 license: Apache-2.0
 metadata:
@@ -13,11 +12,10 @@ metadata:
   owner: sdk-team
 ---
 
-# Alibaba Cloud Agent Toolkit — Pre-Installation Environment Check
+# Alibaba Cloud Agent Toolkit — Installation
 
-This skill validates and sets up all prerequisites required to run the Alibaba Cloud
-Agent Toolkit MCP plugins. Execute each step **in order** — later steps depend on
-earlier ones.
+This skill sets up all prerequisites and installs the Alibaba Cloud Agent Toolkit.
+Execute each step **in order** — later steps depend on earlier ones.
 
 ## Safety Policy
 
@@ -42,6 +40,7 @@ Run through these steps sequentially. **Skip any step whose check already passes
 4. [Check / Install CLI plugins](#step-4-cli-plugins) — Confirm
 5. [Check / Create MCP Server Core](#step-5-mcp-server-core) — Auto (check) / Confirm-cloud (create)
 6. [Check Bearer token exchange](#step-6-bearer-token-exchange) — Auto (check)
+7. [Install Alibaba Cloud Agent Toolkit](#step-7-install-toolkit) — Confirm
 
 ---
 
@@ -300,18 +299,36 @@ can exchange tokens directly.
 
 ---
 
+## Step 7: Install Alibaba Cloud Agent Toolkit {#step-7-install-toolkit}
+
+All prerequisites are now satisfied. Install the toolkit itself.
+
+### Install (Confirm — ask user before executing)
+
+```bash
+npx openplugin acloudlabs-unofficial/alibabacloud-agent-toolkit
+```
+
+> This will download and install the Alibaba Cloud Agent Toolkit plugins into the
+> current agent client. Show the command and **wait for approval** before executing.
+
+After the command completes, the toolkit plugins are installed and ready to use.
+
+---
+
 ## Completion
 
-When all six steps pass, report a summary:
+When all seven steps pass, report a summary:
 
 ```
-Environment check complete — all prerequisites satisfied:
+Installation complete:
   ✓ uv installed
   ✓ Alibaba Cloud CLI installed
   ✓ CLI authenticated (as <AccountId / UserName>)
   ✓ CLI plugins installed (openapiexplorer, sts)
   ✓ MCP Server Core provisioned
   ✓ Bearer token exchange verified
+  ✓ Alibaba Cloud Agent Toolkit installed
 ```
 
-The user is now ready to install and use Alibaba Cloud Agent Toolkit plugins.
+The Alibaba Cloud Agent Toolkit is ready to use.
