@@ -3,10 +3,10 @@ name: alibabacloud-agent-toolkit-precheck
 description: >
   Pre-installation environment check and setup for Alibaba Cloud Agent Toolkit.
   Verifies and installs prerequisites: uv, Alibaba Cloud CLI (aliyun),
-  CLI authentication, openapiexplorer plugin, and MCP Server Core.
-  Use when: alibabacloud agent toolkit install, environment check, prerequisite check,
-  setup alibabacloud, precheck, plugin install, toolkit setup, mcp core setup,
-  aliyun CLI setup.
+  CLI authentication, CLI plugins (openapiexplorer, sts, ramoauth), MCP Server Core,
+  and bearer token exchange. Use when: alibabacloud agent toolkit install,
+  environment check, prerequisite check, setup alibabacloud, precheck,
+  plugin install, toolkit setup, mcp core setup, aliyun CLI setup.
 license: Apache-2.0
 metadata:
   domain: environment-setup
@@ -39,8 +39,9 @@ Run through these steps sequentially. **Skip any step whose check already passes
 1. [Check / Install `uv`](#step-1-uv) — Confirm
 2. [Check / Install Alibaba Cloud CLI (`aliyun`)](#step-2-aliyun-cli) — Confirm
 3. [Check CLI authentication](#step-3-cli-authentication) — Auto (check) / User-only (login)
-4. [Check / Install `openapiexplorer` plugin](#step-4-openapiexplorer-plugin) — Confirm
+4. [Check / Install CLI plugins](#step-4-cli-plugins) — Confirm
 5. [Check / Create MCP Server Core](#step-5-mcp-server-core) — Auto (check) / Confirm-cloud (create)
+6. [Check Bearer token exchange](#step-6-bearer-token-exchange) — Auto (check)
 
 ---
 
@@ -122,9 +123,13 @@ instruct the user to open a new terminal session so the updated PATH takes effec
 aliyun sts get-caller-identity
 ```
 
-- **Pass** → returns JSON containing `AccountId`, `Arn`, and `UserId`. Proceed to Step 4.
+- **Pass** → returns JSON containing `AccountId`, `Arn`, and `UserId`. **Record the
+  authentication mode** (AK vs OAuth) — it affects Step 6. Proceed to Step 4.
 - **Fail** → error response (e.g. `InvalidAccessKeyId`, `ERROR: ...`,
   or similar). Guide the user through OAuth login below.
+
+> **Note:** The output of `aliyun sts get-caller-identity` tells you who the current
+> user is. Share this with the user so they can confirm the correct identity is in use.
 
 ### OAuth Login (User-only — user must run in a separate terminal)
 
@@ -136,7 +141,7 @@ Please run this command in a separate terminal:
 
     aliyun configure --mode OAuth --profile <ProfileName>
 
-Replace <ProfileName> with a name of your choice (e.g. "default", "china", "myprofile").
+Replace <ProfileName> with a name of your choice (e.g. "default", "myprofile").
 This will open a browser for Alibaba Cloud login. Follow the prompts to complete authentication.
 ```
 
@@ -156,24 +161,34 @@ aliyun configure list
 
 ---
 
-## Step 4: `openapiexplorer` Plugin {#step-4-openapiexplorer-plugin}
+## Step 4: CLI Plugins {#step-4-cli-plugins}
+
+Three CLI plugins are required. Check each and install any that are missing.
 
 ### Check (Auto)
 
+Run all three checks:
+
 ```bash
 aliyun plugin show --name openapiexplorer
+aliyun plugin show --name sts
+aliyun plugin show --name ramoauth
 ```
 
-- **Pass** → outputs plugin metadata (name, version, etc.). Proceed to Step 5.
-- **Fail** → `plugin not found` or error. Install below.
+- **All pass** → each outputs plugin metadata. Proceed to Step 5.
+- **Any fail** → `plugin not found` or error. Install the missing ones below.
 
 ### Install (Confirm — ask user before executing)
 
+Install only the missing plugins. Show the command and **wait for approval**:
+
 ```bash
 aliyun plugin install --name openapiexplorer
+aliyun plugin install --name sts
+aliyun plugin install --name ramoauth
 ```
 
-After installation, re-run the check command to verify.
+After installation, re-run the check commands to verify.
 
 ---
 
@@ -187,8 +202,7 @@ The MCP Server Core is a cloud-side resource that can only be created **once** p
 aliyun openapiexplorer list-api-mcp-server-cores --region cn-hangzhou
 ```
 
-- **Pass** → response contains `"totalCount": 1`. The MCP Core already exists. **Done — all
-  prerequisites are satisfied.**
+- **Pass** → response contains `"totalCount": 1`. The MCP Core already exists. Proceed to Step 6.
 - **Fail (totalCount 0)** → no core exists. Create one below.
 - **Fail (permission error)** → the user's RAM identity lacks the required permission.
   See [Permission Error](#permission-error) below.
@@ -228,17 +242,80 @@ Instruct the user (or their account administrator) to:
 
 ---
 
+## Step 6: Bearer Token Exchange {#step-6-bearer-token-exchange}
+
+This step verifies that the MCP Server Core can successfully exchange a bearer token,
+which is required for the MCP server to authenticate API calls at runtime.
+
+### Check (Auto)
+
+```bash
+aliyun RamOAuth GenerateAccessToken \
+  --version 2026-04-21 \
+  --ClientId 4071151845732613353 \
+  --Scope "/internal/acs/openapi" \
+  --force \
+  --endpoint ramoauth.aliyuncs.com \
+  --method POST
+```
+
+- **Pass** → returns a valid token response. **All prerequisites are satisfied.**
+- **Fail (permission error)** → see [Token Permission Error](#token-permission-error).
+- **Fail (other error)** → see [OAuth Application Not Installed](#oauth-app-not-installed).
+
+### Token Permission Error {#token-permission-error}
+
+If the error indicates **insufficient permissions** (e.g. `Forbidden`, `NoPermission`,
+`User not authorized`), the user needs the system policy:
+
+```
+AliyunOpenAPIMCPServerStaticCredentialAccess
+```
+
+This is the same policy required in Step 5. If it was already attached, verify it
+covers the current RAM identity by re-checking `aliyun sts get-caller-identity`.
+
+### OAuth Application Not Installed {#oauth-app-not-installed}
+
+If the error is **not** a permission error (e.g. `InvalidClient`, `AppNotFound`,
+token exchange fails for other reasons), the user likely has not installed the
+**API MCP Server official OAuth application** or has not authorized the current user.
+
+Instruct the user to:
+
+1. Open the [RAM Applications Console](https://ram.console.aliyun.com/applications?activeTab=ThirdParty)
+2. Find and install the **API MCP Server** official application
+3. Authorize the current RAM user/role to use the application
+4. Re-run the token exchange check
+
+### AK Mode Users {#ak-mode-users}
+
+If the user authenticated with **AK mode** (AccessKey) in Step 3, the bearer token
+exchange can work **without** the API MCP Server OAuth application — AK credentials
+can exchange tokens directly.
+
+- If the token exchange **succeeds** in AK mode without the OAuth application installed,
+  inform the user that they can optionally remove the default OAuth application at
+  the [RAM Applications Console](https://ram.console.aliyun.com/applications?activeTab=ThirdParty)
+  if they exclusively use AK mode and want to reduce their application surface.
+- If the token exchange **fails** in AK mode, the issue is likely the
+  `AliyunOpenAPIMCPServerStaticCredentialAccess` policy — see
+  [Token Permission Error](#token-permission-error).
+
+---
+
 ## Completion
 
-When all five steps pass, report a summary:
+When all six steps pass, report a summary:
 
 ```
 Environment check complete — all prerequisites satisfied:
   ✓ uv installed
   ✓ Alibaba Cloud CLI installed
-  ✓ CLI authenticated
-  ✓ openapiexplorer plugin installed
+  ✓ CLI authenticated (as <AccountId / UserName>)
+  ✓ CLI plugins installed (openapiexplorer, sts, ramoauth)
   ✓ MCP Server Core provisioned
+  ✓ Bearer token exchange verified
 ```
 
 The user is now ready to install and use Alibaba Cloud Agent Toolkit plugins.
