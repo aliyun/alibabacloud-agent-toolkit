@@ -85,6 +85,7 @@ for full definitions with examples.
 | **Output** | Assign final data to `result` (dict or list). No `print()`. |
 | **Forbidden** | `os`, `subprocess`, `socket`, `requests`, `eval`, `exec`, `compile`, `getattr`, `setattr`, `globals`, `input`, `breakpoint`, `__import__`, dunder chains. |
 | **Blocked APIs** | Credential-returning APIs (`ram.ListAccessKeys`, `sts.AssumeRole`, `kms.GetSecretValue`). CLI meta products (`configure`, `plugin`, `ossutil`). |
+| **Structure** | `call_cli` must be reachable from module-level execution. Do NOT wrap all calls in an uninvoked `async def` — either write `await call_cli(...)` at top level, or define a function and call it: `async def main(): ... \n await main()`. |
 | **Other** | `time.sleep()` ≤ 30s. No comments. Write/delete/update ops execute directly — the RunScript runtime intercepts write operations and presents them to the user for approval (HITL) before execution. The script itself should not add confirmation prompts. |
 
 ## Script Patterns
