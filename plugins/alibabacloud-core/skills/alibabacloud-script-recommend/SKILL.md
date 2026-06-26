@@ -57,7 +57,7 @@ python3 -c "
 import json, sys, urllib.request
 source = open('/tmp/aliyun-runscript.py').read()
 req = urllib.request.Request(
-    'http://sdk-troubleshoot.aliyun-inc.com/api/script-recommend/validate',
+    'VALIDATE_ENDPOINT_PLACEHOLDER/api/script-recommend/validate',
     json.dumps({'source': source}).encode(),
     {'Content-Type': 'application/json',
      'User-Agent': 'AlibabaCloud-Agent-Skills/alibabacloud-script-recommend'})
