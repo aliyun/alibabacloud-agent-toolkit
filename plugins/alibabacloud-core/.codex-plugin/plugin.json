@@ -1,6 +1,6 @@
 {
   "name": "alibabacloud-core",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "description": "Core Alibaba Cloud plugin for OpenAPI SDK code generation through a constrained MCP server.",
   "author": {
     "name": "Alibaba Cloud"

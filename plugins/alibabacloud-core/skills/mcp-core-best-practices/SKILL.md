@@ -336,8 +336,8 @@ that are not captured in API definitions alone.
 ## Skill Discovery (Fallback)
 
 The in-plugin skills (`alibabacloud-sdk-usage`, `alibabacloud-cli-guidance`,
-`alibabacloud-terraform-usage`, `multi-account-query`) cover SDK codegen,
-CLI guidance, Terraform HCL, and cross-account queries. They do not cover
+`alibabacloud-terraform-code-generation`, `multi-account-query`) cover SDK
+codegen, CLI guidance, Terraform HCL, and cross-account queries. They do not cover
 purpose-built operational solutions, less common products, or end-to-end
 workflows that the Alibaba Cloud team publishes as standalone skills.
 
