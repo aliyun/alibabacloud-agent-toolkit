@@ -109,6 +109,6 @@ for rid, resp in zip(region_ids, responses):
 
 ## Local Validation
 
-Use `script/check_sandbox.py` for fast pre-checks before output. 
+Use `script/check_sandbox.py` for fast pre-checks before output.
 
 Each violation includes a `→ fix` suggestion with actionable remediation.

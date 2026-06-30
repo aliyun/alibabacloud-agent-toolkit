@@ -57,7 +57,6 @@ python3 <SKILL_DIR>/script/check_sandbox.py /tmp/aliyun-runscript.py
 ```
 
 Where `<SKILL_DIR>` is the directory containing this SKILL.md file.
-
 6. If validation fails, read the `→ fix` suggestion for each violation, fix ONLY the listed
    issues, and re-validate. Maximum 3 rounds. If violations persist, show them to the user.
 
