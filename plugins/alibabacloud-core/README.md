@@ -6,8 +6,8 @@ This plugin includes:
 
 - Plugin manifests for Codex and Claude Code
 - An MCP server named `alibabacloud-core` that covers all Alibaba Cloud OpenAPIs
-- Skills for SDK code generation, multi-account resource querying, and MCP Core
-  best practices
+- Skills for SDK code generation, Terraform HCL generation, multi-account
+  resource querying, and MCP Core best practices
 
 ## Install
 
@@ -54,14 +54,14 @@ environments, configure a safety policy to restrict the callable command set:
 | Skill | Description |
 |-------|-------------|
 | `alibabacloud-sdk-usage` | Generate or modify Alibaba Cloud SDK code using OpenAPI metadata |
-| `alibabacloud-terraform-usage` | Generate and modify Alibaba Cloud Terraform HCL configurations |
+| `alibabacloud-terraform-code-generation` | Generate validated Alibaba Cloud Terraform HCL from natural language using alibabacloud-core MCP metadata, docs, and remote IaCService validation |
 | `alibabacloud-multi-account-query` | Query resources across RD member accounts by alias |
 | `alibabacloud-mcp-core-best-practices` | Shared reference for MCP Core tool usage patterns |
 | `alibabacloud-find-skills` | Search and install Alibaba Cloud official skills when this plugin's built-in skills don't cover the user's task |
 
 ### When the built-in skills don't fit
 
-The four skills above cover the common ground (SDK codegen, Terraform, CLI guidance, cross-account queries). For everything else — purpose-built operational solutions (batch ops, key rotation, backup audits), less common products, or end-to-end workflows packaged by the Alibaba Cloud team — invoke `alibabacloud-find-skills`. It searches the official Alibaba Cloud skill catalog and installs a matching skill on demand, so the agent does not have to hand-roll an answer when a vetted one already exists. See the `mcp-core-best-practices` Skill Discovery section for exact trigger conditions.
+The built-in skills above cover the common ground (SDK codegen, Terraform, CLI guidance, cross-account queries). For everything else — purpose-built operational solutions (batch ops, key rotation, backup audits), less common products, or end-to-end workflows packaged by the Alibaba Cloud team — invoke `alibabacloud-find-skills`. It searches the official Alibaba Cloud skill catalog and installs a matching skill on demand, so the agent does not have to hand-roll an answer when a vetted one already exists. See the `mcp-core-best-practices` Skill Discovery section for exact trigger conditions.
 
 ## Hooks
 

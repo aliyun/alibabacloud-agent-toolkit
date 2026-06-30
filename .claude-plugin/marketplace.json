@@ -18,7 +18,7 @@
       ],
       "name": "alibabacloud-core",
       "source": "./plugins/alibabacloud-core",
-      "version": "1.0.14"
+      "version": "1.0.15"
     },
     {
       "category": "cloud",
