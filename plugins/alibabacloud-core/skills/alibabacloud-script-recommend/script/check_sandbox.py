@@ -28,16 +28,13 @@ FORBIDDEN_FUNCS = [
 
 
 def check(source: str) -> list[dict]:
-    """Return list of {rule_id, line, message} violations."""
+    """Return list of {rule_id, line, message, fix} violations."""
     violations = []
     lines = source.splitlines()
-
     has_result = False
 
     for i, line in enumerate(lines, 1):
         stripped = line.strip()
-
-        # Skip comments and blank lines
         if not stripped or stripped.startswith("#"):
             continue
 
@@ -49,13 +46,16 @@ def check(source: str) -> list[dict]:
                 violations.append({
                     "rule_id": "SEC-4001", "line": i,
                     "message": f"Forbidden import: {mod}",
+                    "fix": f"Remove 'import {mod}'. Allowed: {', '.join(sorted(IMPORT_WHITELIST))}. "
+                           f"call_cli is pre-injected — do not import it.",
                 })
 
         # ── OBF-3018: print() ──
         if re.search(r'\bprint\s*\(', stripped):
             violations.append({
                 "rule_id": "OBF-3018", "line": i,
-                "message": "print() disallowed; use result",
+                "message": "print() disallowed",
+                "fix": "Remove print(); assign data to 'result' instead (dict or list).",
             })
 
         # ── SEC-4002: eval / exec / reflection ──
@@ -64,13 +64,15 @@ def check(source: str) -> list[dict]:
                 violations.append({
                     "rule_id": "SEC-4002", "line": i,
                     "message": f"Forbidden call: {fn}()",
+                    "fix": f"Remove {fn}(). Sandbox blocks all reflection and dynamic code execution.",
                 })
 
         # ── SEC-4002: input() ──
         if re.search(r'\binput\s*\(', stripped):
             violations.append({
                 "rule_id": "SEC-4002", "line": i,
-                "message": "input() disallowed in sandbox",
+                "message": "input() disallowed",
+                "fix": "Remove input(). The RunScript runtime handles user confirmation (HITL) automatically — do not add prompts.",
             })
 
         # ── SLP-3001: time.sleep > 30 ──
@@ -79,6 +81,7 @@ def check(source: str) -> list[dict]:
             violations.append({
                 "rule_id": "SLP-3001", "line": i,
                 "message": f"time.sleep({m_sleep.group(1)}) > 30s",
+                "fix": "Split into a loop: for _ in range(N): time.sleep(30)",
             })
 
         # ── result assignment ──
@@ -89,6 +92,7 @@ def check(source: str) -> list[dict]:
         violations.append({
             "rule_id": "OUT-3001", "line": 0,
             "message": "No 'result = ...' assignment found",
+            "fix": "Add 'result = <dict or list>' at the end of the script to return data.",
         })
 
     return violations
@@ -118,6 +122,7 @@ def main():
             for v in vs:
                 ln = f"L{v['line']}" if v["line"] else "   "
                 print(f"        {ln}  [{v['rule_id']}] {v['message']}")
+                print(f"              → {v['fix']}")
             failed += 1
 
     total = passed + failed

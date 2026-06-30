@@ -107,21 +107,16 @@ for rid, resp in zip(region_ids, responses):
         result[rid] = {"error": str(resp)}
 ```
 
-## Remote Validation API
+## Local Validation
 
-`POST VALIDATE_ENDPOINT_PLACEHOLDER/api/script-recommend/validate`
+Use `script/check_sandbox.py` for fast pre-checks before output. It catches:
 
-Headers: `Content-Type: application/json`, `User-Agent: AlibabaCloud-Agent-Skills/alibabacloud-script-recommend`
+| Rule | What it catches |
+|------|----------------|
+| SEC-4001 | Forbidden imports (os, subprocess, requests, etc.) |
+| SEC-4002 | Forbidden calls (eval, exec, getattr, input, etc.) |
+| OBF-3018 | print() usage |
+| SLP-3001 | time.sleep() > 30s |
+| OUT-3001 | Missing `result = ...` assignment |
 
-Body: `{"source": "..."}`
-
-Response on failure:
-
-```json
-{
-  "passed": false,
-  "violations": [
-    {"rule_id": "SEC-4001", "line": 1, "message": "Forbidden import: os", "snippet": "import os"}
-  ]
-}
-```
+Each violation includes a `→ fix` suggestion with actionable remediation.

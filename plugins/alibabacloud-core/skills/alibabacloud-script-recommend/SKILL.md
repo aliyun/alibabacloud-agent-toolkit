@@ -47,36 +47,27 @@ python-safety validation before output. Do not execute the script unless the use
    Only whitelisted modules may be imported. When multiple tool calls are needed, batch them in parallel. Never repeat
    the same tool call with the same arguments.
 
-5. Write to `/tmp/aliyun-runscript.py` and validate:
+5. Write to `/tmp/aliyun-runscript.py` and validate with the local sandbox checker:
 
 ```bash
 cat > /tmp/aliyun-runscript.py <<'PYEOF'
 <script body here>
 PYEOF
-python3 -c "
-import json, sys, urllib.request
-source = open('/tmp/aliyun-runscript.py').read()
-req = urllib.request.Request(
-    'VALIDATE_ENDPOINT_PLACEHOLDER/api/script-recommend/validate',
-    json.dumps({'source': source}).encode(),
-    {'Content-Type': 'application/json',
-     'User-Agent': 'AlibabaCloud-Agent-Skills/alibabacloud-script-recommend'})
-resp = json.loads(urllib.request.urlopen(req, timeout=30).read())
-print(json.dumps(resp, indent=2, ensure_ascii=False))
-sys.exit(0 if resp.get('passed') else 1)
-"
+python3 <SKILL_DIR>/script/check_sandbox.py /tmp/aliyun-runscript.py
 ```
 
-6. If validation fails, fix ONLY the listed violations and re-validate. Maximum 3 rounds.
-   If violations persist, show them to the user.
+Where `<SKILL_DIR>` is the directory containing this SKILL.md file.
+
+6. If validation fails, read the `→ fix` suggestion for each violation, fix ONLY the listed
+   issues, and re-validate. Maximum 3 rounds. If violations persist, show them to the user.
 
 7. After validation passes, output only the Python script body — no Markdown fences,
    headings, or explanatory text unless the user asks.
 
 ## Sandbox Contract
 
-All rules below are enforced by the remote validation API. See `references/runscript-contract.md`
-for full definitions with examples.
+All rules below are enforced by `script/check_sandbox.py` (local pre-check) and remote validation.
+See `references/runscript-contract.md` for full definitions with examples.
 
 | Category | Rule |
 |----------|------|
