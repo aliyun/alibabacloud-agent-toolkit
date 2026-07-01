@@ -1,14 +1,13 @@
 ---
 name: alibabacloud-script-recommend
 description: >
-  Generate Alibaba Cloud RunScript-compatible Python scripts from natural-language cloud
-  operation requests. Use when the user asks to write Python code that calls Alibaba Cloud APIs,
-  generate scripts for cloud resource management, or produce a validated script that should pass
-  python-safety static validation.
+  Generate Alibaba Cloud MCP Core RunScript-compatible Python scripts (using `call_cli()`)
+  from natural-language cloud operation requests. Use when the user explicitly asks for
+  RunScript scripts, MCP Core scripts, or sandbox-compatible cloud automation code.
+  For standard SDK Python code with imports and credentials, use `alibabacloud-sdk-usage` instead.
 triggers: >
-  生成Python脚本, Python脚本, 阿里云脚本, RunScript, 云资源脚本,
-  generate Python script, write Python code, cloud automation script,
-  Python代码推荐, script recommend
+  RunScript, RunScript脚本, MCP脚本, call_cli脚本, 沙箱脚本,
+  generate RunScript, MCP Core script, script recommend
 license: Apache-2.0
 metadata:
   domain: aliyun-runscript
