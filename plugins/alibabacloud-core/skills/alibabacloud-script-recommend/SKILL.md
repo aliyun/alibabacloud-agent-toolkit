@@ -36,31 +36,31 @@ python-safety validation before output. Do not execute the script unless the use
 1. Split the request into atomic cloud operations. For each operation, verify the product,
    API name, version, and required parameters using MCP tools — do not guess.
 
-2. Search APIs for operations whose API you are uncertain about. Use
+1. Search APIs for operations whose API you are uncertain about. Use
    `AlibabaCloud___SearchApis` with a natural language description. Keep to one parallel batch.
 
-3. Read API definitions to confirm exact parameter names and types. Use
+1. Read API definitions to confirm exact parameter names and types. Use
    `AlibabaCloud___GetApiDefinition` with product, action, and version. Do not skip this
    step for unfamiliar APIs.
 
-4. Generate one Python script body following the Sandbox Contract and Script Patterns below.
+1. Generate one Python script body following the Sandbox Contract and Script Patterns below.
    Only whitelisted modules may be imported. When multiple tool calls are needed, batch them in parallel. Never repeat
    the same tool call with the same arguments.
 
-5. Write to `/tmp/aliyun-runscript.py` and validate with the local sandbox checker:
+1. Write to `/tmp/aliyun-runscript.py` and validate with the local sandbox checker
+   (`<SKILL_DIR>/script/check_sandbox.py`):
 
-```bash
-cat > /tmp/aliyun-runscript.py <<'PYEOF'
-<script body here>
-PYEOF
-python3 <SKILL_DIR>/script/check_sandbox.py /tmp/aliyun-runscript.py
-```
+   ```bash
+   cat > /tmp/aliyun-runscript.py <<'PYEOF'
+   <script body here>
+   PYEOF
+   python3 <SKILL_DIR>/script/check_sandbox.py /tmp/aliyun-runscript.py
+   ```
 
-Where `<SKILL_DIR>` is the directory containing this SKILL.md file.
-6. If validation fails, read the `→ fix` suggestion for each violation, fix ONLY the listed
+1. If validation fails, read the `→ fix` suggestion for each violation, fix ONLY the listed
    issues, and re-validate. Maximum 3 rounds. If violations persist, show them to the user.
 
-7. After validation passes, output only the Python script body — no Markdown fences,
+1. After validation passes, output only the Python script body — no Markdown fences,
    headings, or explanatory text unless the user asks.
 
 ## Sandbox Contract
