@@ -4,8 +4,8 @@ description: |
   Use when the user wants Terraform HCL for Alibaba Cloud (Alicloud) infrastructure —
   new project or extending an existing one. Covers VPC, ECS, ApsaraDB RDS, OSS,
   SLB / ALB, Function Compute v3, ACK, and any other `alicloud_*` resource via the
-  provider documentation and IaCService metadata. IaCService API calls must go
-  through the alibabacloud-core MCP CallCLI tool. For AWS → Alicloud migration,
+  provider documentation and IaCService metadata. IaCService API calls should use
+  the CallCLI-compatible tool exposed by the alibabacloud-core MCP server. For AWS → Alicloud migration,
   importing existing resources into state, or remote plan/apply execution, use
   a different skill.
   Triggers: "write terraform for alicloud", "generate alibaba cloud terraform",
@@ -27,13 +27,10 @@ and product-specific guardrails.
 ### 1. Credentials — never leak, never require
 
 NEVER read, print, ask for, or write AK/SK values anywhere — HCL, comments, env
-declarations, shell output, logs. The alicloud provider resolves credentials
-through seven mechanisms (env AK/SK, shared `config.json`, ECS instance RAM
-role, Assume Role, OIDC/RRSA, sidecar URI, static HCL) — see
-`references/auth-and-network.md` for the full chain. All read by the provider
-itself, never by this skill. Do NOT recommend the deprecated `ALICLOUD_*` /
-`ALIBABACLOUD_*` (no-underscore) env-var names — the current names are
-`ALIBABA_CLOUD_ACCESS_KEY_ID` / `_ACCESS_KEY_SECRET` / `_SECURITY_TOKEN`.
+declarations, shell output, logs. The provider reads credentials itself from
+env, shared config, RAM role, OIDC/RRSA, sidecar, or static HCL. Do NOT
+recommend deprecated `ALICLOUD_*` or `ALIBABACLOUD_*` env names; current names
+are `ALIBABA_CLOUD_ACCESS_KEY_ID`, `_ACCESS_KEY_SECRET`, and `_SECURITY_TOKEN`.
 
 ### 2. Honest reporting — never claim a step you didn't run
 
@@ -42,23 +39,25 @@ command actually executed AND returned that status. When a step is skipped
 (tool missing, user opt-out), state **"SKIPPED"** (or **"FAILED"**) with a
 reason. Paraphrasing real output is fine; fabricating it is not.
 
-### 3. No local `terraform` execution
+### 3. Validation and execution boundary
 
-This skill NEVER runs `terraform` locally — not `fmt`, `init`, `validate`,
-`plan`, or `apply`. Validation routes through MCP (Step 6, `aliyun
-iacservice validate-module` via `AlibabaCloud___CallCLI`). Plan and apply
-belong to the user's deployment workflow or the `alibabacloud-spec-ops`
-execution skill, not this standalone code-generation skill.
+Never run `terraform apply`. Run `terraform plan` only when the user asks.
+Validation uses IaCService MCP when available, otherwise local
+`terraform fmt/init/validate` when the binary exists. Never claim validation
+passed unless that exact path ran successfully.
 
 ## Environment (soft recommendations)
 
-- **MCP** — the `alibabacloud-core` MCP server must be reachable; all
-  IaCService API calls go through `AlibabaCloud___CallCLI`. Do NOT call local
-  `aliyun` or helper scripts for IaCService.
+- **MCP** — prefer the CallCLI-compatible tool exposed by the
+  `alibabacloud-core` MCP server for IaCService API calls. Tool names may be
+  namespace-prefixed by the host client; select the tool whose name ends with
+  `AlibabaCloud___CallCLI` or is documented by the installed plugin as CallCLI.
+  Do NOT call local `aliyun` or helper scripts for IaCService when that MCP tool
+  is available.
 - **IaCService endpoint** — use `--endpoint iac.cn-zhangjiakou.aliyuncs.com`
   for all IaCService commands. Do NOT derive endpoints from `region`.
-- **No local Terraform dependency** — validation uses remote IaCService
-  `validate-module`; no local `terraform` binary is required.
+- **Terraform fallback** — local Terraform is optional and used only when
+  IaCService validation is unavailable.
 
 ## Workflow
 
@@ -127,9 +126,11 @@ catalog grep, pattern grep; then parallelize per-type `get-resource-type`.
 Run the live MCP metadata lookup and local targeted lookups before writing HCL.
 Optimize for one pass over each unique key:
 
-**(a) IaCService metadata via MCP** — when `AlibabaCloud___CallCLI` is exposed
-in the session, you MUST attempt live metadata lookup. Do NOT silently skip this
-step. Do NOT run these commands in a local shell.
+**(a) IaCService metadata via MCP** — when a CallCLI-compatible MCP tool is
+exposed in the session, you MUST attempt live metadata lookup. In most clients
+the tool name ends with `AlibabaCloud___CallCLI`, but it may include a plugin or
+server namespace prefix. Do NOT silently skip this step. Do NOT run these
+commands in a local shell.
 
 Use this de-duplicated call plan:
 
@@ -160,21 +161,25 @@ Step 7:
   IaCService.
 - `failed` — include the attempted command/API and the concise failure reason;
   continue with provider docs plus the local catalog.
-- `skipped` — only allowed when the `AlibabaCloud___CallCLI` tool is not
-  exposed in the current session; include that exact reason.
+- `skipped` — only allowed when no CallCLI-compatible MCP tool is exposed in
+  the current session; include that exact reason.
 
-Never report `metadata constraints: SKIPPED` if CallCLI was available but you
-did not try the IaCService command. That is a workflow failure; go back and run
-the metadata lookup. If a CallCLI invocation fails, record the failure as
-evidence and continue with provider docs plus the local catalog; do not
-simulate API results.
+Never report `metadata constraints: SKIPPED` if a CallCLI-compatible MCP tool
+was available but you did not try the IaCService command. That is a workflow
+failure; go back and run the metadata lookup. If a CallCLI invocation fails,
+record the failure as evidence and continue with provider docs plus the local
+catalog; do not simulate API results.
 
 Two local lookups; **run them concurrently** with the live metadata lookup:
 
-**(b) Catalog lookup** — confirm the resource exists and check deprecation.
-The catalog (`references/alicloud-providers.md`) is ~2600 lines; **do NOT
-`Read` it whole**. Use exact table-row grep per requested type; avoid substring
-patterns such as `alicloud_(vpc|instance)` because they overmatch:
+**(b) Catalog lookup** — use the local generated catalog as a stale-tolerant
+cache for common data source names plus deprecated resource/data-source routing
+and doc URL fallback. Normal supported resources and non-common data sources are
+intentionally omitted; IaCService metadata is authoritative for resource
+availability. The catalog (`references/alicloud-providers.md`) is a compact
+index; **do NOT `Read` it whole**. Use exact table-row grep per requested type;
+avoid substring patterns such as `alicloud_(vpc|instance)` because they
+overmatch:
 
 ```bash
 for type in alicloud_vpc alicloud_vswitch alicloud_instance; do
@@ -190,15 +195,19 @@ grep -E '^\| (resource|data source) \| `alicloud_<name>` \|' references/alicloud
 
 Three outcomes:
 
-- **Row found, status column empty** → note the `[doc](<url>)` from the row;
-  proceed to 4.2.
+- **Row found, status column empty** → this is a common data source row; note
+  the `[doc](<url>)` from the row and proceed to 4.2.
 - **Row found, status `DEPRECATED -> <new_name>`** → switch the plan to
   `<new_name>` and re-lookup. NEVER emit the deprecated name. Common catch:
   `alicloud_fc_function` → `alicloud_fcv3_function`.
 - **Row found, status `DEPRECATED` without replacement** → stop and ask for a
   supported alternative; do not emit the deprecated resource/data source.
-- **Row not found** → stop. Ask the user whether the name was a typo;
-  don't invent an `alicloud_<guess>`.
+- **Row not found, but IaCService `get-resource-type` succeeded** → continue;
+  record `normal resource omitted from catalog; IaCService metadata used`.
+- **Row not found for a non-common data source** → use provider documentation
+  lookup when available; otherwise ask before inventing a data source name.
+- **Row not found and IaCService also failed, skipped, or missed for a resource**
+  → stop. Ask whether the name was a typo; don't invent an `alicloud_<guess>`.
 
 **(c) Pattern lookup** (conditional) — if the user's requirement matches a
 product-specific idiom listed in `references/resource-patterns.md` (e.g.
@@ -224,8 +233,8 @@ resource, then cache any matching sections.
 
 Do NOT fetch provider docs when IaCService metadata and selected official
 examples from 4.1 contain enough schema and usage shape for HCL generation.
-Provider doc fetch is not a default phase; running WebFetch on the fast path is
-a workflow failure.
+Provider doc fetch is not a default phase; running external documentation fetch
+on the fast path is a workflow failure.
 
 Fetch provider docs only when metadata is unavailable/incomplete for the user's
 requirement, examples are absent/insufficient, Step 6 diagnostics cannot be
@@ -269,7 +278,7 @@ Use the fastest batch write method allowed by the host client (single batch
 edit, script, or heredoc); avoid serial per-file writes unless required.
 
 Before writing a field, look up the resource in
-`references/deprecated-fields.md` (see §5.5 handling rules):
+`references/deprecated-fields.md` for local fix actions (see §5.5):
 
 ```bash
 grep '`alicloud_<resource>`' references/deprecated-fields.md
@@ -286,12 +295,19 @@ Resolve via `data` blocks, never literals. These also pass Step 4's gate:
 - `zone_id` → `data "alicloud_zones"` (filter by `available_resource_creation`).
 - `image_id` → `data "alicloud_images"` (filter by `name_regex`, `owners = "system"`, `most_recent = true`).
 - `instance_type` → `data "alicloud_instance_types"` (filter by `cpu_core_count`, `memory_size`, AZ).
+- Never put literal defaults for `zone_id`, `image_id`, or ECS
+  `instance_type` variables. Resource arguments must reference the data source
+  result, not a hardcoded ID or a variable default.
 
 Generate `variables.tf` for all `variable` blocks; every generated `var.*`
 MUST have type and description. Generate `outputs.tf` for useful non-sensitive
 resource IDs, endpoints, and names. Terraform merges all `*.tf` equivalently.
 
 #### 5.3 Provider block (content contract)
+
+**HARD GATE: must pass before Step 6.** The provider contract is mandatory, not
+stylistic. Any missing block, open-ended provider version, hardcoded region, or
+missing `configuration_source` must be fixed before validation.
 
 Two Terraform blocks must appear **somewhere** in the project's `*.tf`
 files. Terraform merges all `*.tf` in a directory, so *file organization
@@ -305,7 +321,7 @@ terraform {
   required_providers {
     alicloud = {
       source  = "aliyun/alicloud"
-      version = "~> 1.274"
+      version = "~> 1.280"
     }
   }
 }
@@ -315,13 +331,14 @@ terraform {
   version through IaCService metadata when available, then write a pessimistic
   minor constraint (`1.278.0` -> `~> 1.278`).
   Lookup sources, in order:
-  1. MCP `AlibabaCloud___CallCLI` with `aliyun iacservice list-terraform-provider-versions`
+  1. CallCLI-compatible MCP tool with `aliyun iacservice list-terraform-provider-versions`
      if supported by the installed MCP/proxy version.
-  2. MCP `AlibabaCloud___CallCLI` metadata responses that include provider
+  2. CallCLI-compatible MCP metadata responses that include provider
      version information.
   3. Provider registry/GitHub release metadata only when the host client has an
      explicit safe documentation fetch mechanism.
-- If lookup fails, fall back to `~> 1.274`. Accepted form is `~> 1.<minor>`
+- If lookup fails, fall back to `~> 1.280` (last reviewed 2026-07-02).
+  Accepted form is `~> 1.<minor>` or `~> 1.<minor>.<patch>`
   from a confirmed or conservative stable 1.x release. Do NOT write open-ended
   constraints (`>= 1.x`, `>= 1.239.0`) or bare version strings.
 
@@ -331,11 +348,13 @@ and `configuration_source`:
 ```hcl
 provider "alicloud" {
   region               = var.region
-  configuration_source = "AlibabaCloud-Agent-Toolkit/alibabacloud-core"
+  configuration_source = "AlibabaCloud-Agent-Skills/alibabacloud-terraform-code-generation/<32hex>"
 }
 ```
 
-- `configuration_source` is the attribution signature — required.
+- `configuration_source` is required. Resolve one session id per task: use
+  `SKILL_SESSION_ID` only if it is exactly 32 hex characters; otherwise generate
+  one 32-character lowercase hex value once. Replace `<32hex>` with the real id.
 - `region` MUST reference `var.region`, not a hardcoded literal.
 
 **File organization (recommended, not required)**: conventional split is
@@ -345,9 +364,11 @@ top of `main.tf`. Pick what fits the project — Terraform merges all
 `*.tf` equivalently. Do NOT add a filename check; run the content check
 below instead.
 
-**Post-generation verification:** read `references/static-checks.md` and run
-the Provider Block Check. All three checks must return `OK`. If any fails, fix
-the offending content and re-run — do NOT proceed to Step 6 with failures.
+**Post-generation verification:** run `scripts/static_checks.sh provider
+<target-dir>`. All lines must return `OK_*`. If any fails, fix the offending
+content and re-run. Do NOT proceed to Step 6 with `BAD_OR_MISSING_VERSION`,
+`MISSING_CFG_SOURCE`, or `HARDCODED_REGION`. Do NOT claim provider verification
+unless the script emitted `OK_VERSION`, `OK_CFG_SOURCE`, and `OK_REGION_VAR`.
 
 #### 5.4 Style baseline
 
@@ -361,8 +382,10 @@ the offending content and re-run — do NOT proceed to Step 6 with failures.
 #### 5.5 Deprecated-field audit — static grep pass (MANDATORY)
 
 Run before `terraform` is needed — this is a pure-grep pass on the HCL you
-just wrote. For every resource in this generation, grep the project against
-`references/deprecated-fields.md` and handle each row-kind:
+just wrote. IaCService/provider diagnostics decide whether a field is currently
+deprecated; `references/deprecated-fields.md` is a compact fix-action map for
+high-risk fields whose replacement is not always returned by IaCService. For
+every generated resource, grep the project against it and handle each row-kind:
 
 - **rename** row → if the old field name appears in HCL you just wrote,
   replace it with the new field name. Examples that show up most often:
@@ -381,51 +404,59 @@ just wrote. For every resource in this generation, grep the project against
 Applies only to files written in this generation — do NOT refactor
 pre-existing user files you weren't asked to touch.
 
-**HARD GATE: must pass before Step 6** — read
-`references/static-checks.md` and run the Deprecated Field Audit. If it produces
-any `DEPRECATED:` line, fix using the Action column in
-`references/deprecated-fields.md`, then re-run until every line returns `OK:`.
+**HARD GATE: must pass before Step 6** — run `scripts/static_checks.sh
+deprecated <target-dir>`. If it produces any `DEPRECATED:` line, fix using the
+Action column in `references/deprecated-fields.md`, then re-run until every line
+returns `OK:`.
+Before the audit, explicitly grep each generated resource type in
+`references/deprecated-fields.md`; any `rename` row means the old field name is
+forbidden in generated HCL.
 Do NOT proceed to Step 6 with any `DEPRECATED:` output. Do NOT claim
 "verified" unless the script produces all `OK:`.
 
-### Step 6. Validate via IaCService (remote, MCP)
+### Step 6. Validate
 
-NEVER run `terraform fmt`, `terraform init`, or `terraform validate`
-locally. Validation runs server-side through the available MCP tool ending in
-`AlibabaCloud___CallCLI` with `aliyun iacservice validate-module`. The IaCService backend performs
-Terraform syntax and schema validation without requiring a local
-Terraform binary, network access to `registry.terraform.io`, or backend init.
-Always use the fixed Zhangjiakou endpoint:
-`--endpoint iac.cn-zhangjiakou.aliyuncs.com`. Do NOT use the Terraform
-resource region (for example `cn-hangzhou`) as the IaCService endpoint region.
+Prefer IaCService remote validation through the available CallCLI-compatible MCP
+tool, usually the tool whose name ends with `AlibabaCloud___CallCLI`, with
+`aliyun iacservice validate-module`; use endpoint
+`--endpoint iac.cn-zhangjiakou.aliyuncs.com`. Related commands are
+`list-products`, `get-resource-type`, `get-provider-document`,
+`list-terraform-provider-versions`, and `validate-module --source Upload`.
+For `validate-module`, preserve real newlines in `--code` and generate a fresh
+UUID `--client-token`.
 
-Read `references/iacservice-cli.md` for exact syntax. Prefer the fast path:
-concatenate generated `.tf` files in memory and submit one `--code` payload.
-Use `--code-map` only when filename-specific diagnostics are needed or `--code`
-fails unexpectedly. Generate a fresh UUID `--client-token` per call.
+**Remote validation limits:** IaCService validates uploaded Terraform in a
+remote sandbox. Do NOT introduce dependencies that require local filesystem
+access or unregistered providers before this step:
 
-**Loop until validate passes** (max 3 fix attempts total):
+- No local file functions in remotely validated code: `file()`, `filebase64()`,
+  `templatefile()`, `fileset()`, `archive_file`, or `source = "./..."` module
+  references. Inline small generated artifacts when needed, or omit artifact
+  packaging from remote validation and explain that boundary.
+- Avoid third-party providers such as `hashicorp/archive` in generated modules.
+  The validation environment is intended for the Alibaba Cloud provider path;
+  if another provider is unavoidable, report `Validation: SKIPPED` or
+  `FAILED` with the exact IaCService diagnostic instead of adding local-only
+  workarounds.
+- Do not use local paths (`file://`, relative zip/code paths, or machine-local
+  directories) in arguments that IaCService must evaluate.
 
-1. Parse the IaCService response. If there are **errors / diagnostics with
-   severity `error`** → fix the offending file in `<target-dir>/`,
-   regenerate the `--code` or `--code-map` payload, then go to step 3.
-2. Scan the response diagnostics for `[DEPRECATED]` strings. The provider
-   emits authoritative deprecation annotations (e.g. `"document":
-   "[DEPRECATED] … New field 'assume_role_policy_document' instead."`).
-   If found → fix the matching field, then go to step 3.
-3. Re-invoke `aliyun iacservice validate-module` via
-   `AlibabaCloud___CallCLI` and go back to step 1.
+If CallCLI is unavailable or fails before validation starts, fall back to local
+Terraform when present:
 
-Exit the loop only when validate reports **no errors AND no `[DEPRECATED]`
-diagnostics**. After 3 attempts without reaching this state: proceed to
-Step 7 with `Validation: FAILED (<diagnostic excerpt>)` and include the
-failing HCL verbatim in the optional notes.
+```bash
+(cd <target-dir> && terraform fmt -recursive && terraform init -backend=false && terraform validate -json)
+```
 
-**If the MCP CallCLI fails** (auth, network to OpenAPI endpoint, or
-IaCService backend unavailable): do NOT fall back to local `terraform
-validate`. SKIP this step and surface the failure in Step 7's summary
-(Hard rule §2) with
-`Validation: SKIPPED (iacservice validate-module unavailable — <reason>)`.
+If `terraform` is not on PATH, report exactly:
+`Validation: SKIPPED (terraform binary not on PATH)`.
+
+Loop up to 3 fix attempts for either validation path:
+
+1. Fix diagnostics with severity `error`.
+2. Fix any deprecation diagnostics or `[DEPRECATED]` strings.
+3. Re-run the same validation path. Stop only with no errors and no
+   deprecation diagnostics.
 
 ### Step 7. Coverage check + summarize
 
@@ -445,9 +476,9 @@ Files written:
 <path/to/file2>
 ...
 
-IaCService metadata: <ok | SKIPPED (CallCLI tool not exposed) | FAILED (<reason>)>
+IaCService metadata: <ok | SKIPPED (CallCLI-compatible MCP tool not exposed) | FAILED (<reason>)>
 
-Validation: <iacservice validate-module: ok | SKIPPED (...) | FAILED (...)>
+Validation: <iacservice validate-module: ok | terraform fmt+validate: ok | SKIPPED (...) | FAILED (...)>
 
 Deprecation routing: <If re-routed: `<original_name>` → `<new_name>`; else: None>
 
@@ -457,14 +488,15 @@ Deprecation routing: <If re-routed: `<original_name>` → `<new_name>`; else: No
 Allowed `Validation:` values:
 
 - `Validation: iacservice validate-module: ok`
-- `Validation: SKIPPED (iacservice validate-module unavailable — <reason>)`
+- `Validation: terraform fmt+validate: ok`
+- `Validation: SKIPPED (terraform binary not on PATH)`
 - `Validation: SKIPPED (<reason>)`
 - `Validation: FAILED (<diagnostic excerpt>)`
 
 `IaCService metadata:` summarizes Step 4.1 only. Use `ok` only when every
 generated resource/data source had successful metadata lookup; use
-`SKIPPED (CallCLI tool not exposed)` only when CallCLI is unavailable; otherwise
-use `FAILED (<reason>)`.
+`SKIPPED (CallCLI-compatible MCP tool not exposed)` only when no CallCLI-style
+MCP tool is available; otherwise use `FAILED (<reason>)`.
 
 ### Step 8 (internal). Where execution belongs — DO NOT narrate to user
 
@@ -479,8 +511,6 @@ to deploy, point to their normal Terraform workflow or
 | --- | --- |
 | `references/alicloud-providers.md` (local) | Step 4.1 — resource existence, deprecation mark, doc URL |
 | OSS provider doc mirror, then catalog GitHub/raw URL | Step 4.2 — fallback docs for HCL argument shape and examples |
-| `references/iacservice-cli.md` | IaCService command/parameter reference for Step 4.1 and Step 6 |
-| `references/deprecated-fields.md` (local) | Step 5.1 + Step 5.5 — field-level deprecations not always flagged by IaCService |
+| `references/deprecated-fields.md` (local) | Step 5.1 + Step 5.5 — fix actions for high-risk deprecated fields |
 | `references/resource-patterns.md` (local) | Step 5.1 — product-specific idioms not emphasized by the provider doc (RDS HA, …) |
-| `references/static-checks.md` | Step 5.3 + Step 5.5 — provider block and deprecated-field verification scripts |
-| `references/auth-and-network.md` (local) | Background credential chain reference; this skill does not consume credentials |
+| `scripts/static_checks.sh` | Step 5.3 + Step 5.5 — provider block and deprecated-field verification |
