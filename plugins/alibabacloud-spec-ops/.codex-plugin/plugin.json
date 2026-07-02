@@ -1,6 +1,6 @@
 {
   "name": "alibabacloud-spec-ops",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Alibaba Cloud AI Ops Plugin - Infrastructure operations workflow with intelligent planning, validation, and execution powered by MCP tooling",
   "author": {
     "name": "Alibaba Cloud"
