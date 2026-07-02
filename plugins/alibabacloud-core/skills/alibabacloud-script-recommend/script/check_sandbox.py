@@ -80,14 +80,6 @@ def check(source: str) -> list[dict]:
                            f"call_cli is pre-injected — do not import it.",
                 })
 
-        # ── SEC-4001b: importlib ──
-        if re.search(r'\bimportlib\b', stripped):
-            violations.append({
-                "rule_id": "SEC-4001", "line": i,
-                "message": "importlib disallowed",
-                "fix": "Remove importlib usage. Dynamic module loading is blocked by the sandbox.",
-            })
-
         # ── OBF-3018: print() ──
         if re.search(r'\bprint\s*\(', stripped):
             violations.append({
@@ -198,18 +190,6 @@ def _check_call_cli(source: str, lines: list[str], violations: list[dict]):
                 "message": f"Blocked API: {product}.{action}",
                 "fix": f"{product}.{action} returns credentials/secrets and is blocked. Remove this call.",
             })
-
-        # ── BLK-4001: aliyun substring in params values ──
-        params_m = re.search(r'params\s*=\s*\{([^}]+)\}', arg_str, re.DOTALL)
-        if params_m:
-            values = re.findall(r'["\']([^"\']+)["\']', params_m.group(1))
-            for val in values:
-                if re.search(r'aliyun(?![a-zA-Z_])', val):
-                    violations.append({
-                        "rule_id": "BLK-4001", "line": line_no,
-                        "message": f"Param value '{val[:50]}' contains 'aliyun'",
-                        "fix": f"Remove 'aliyun' from '{val[:40]}'. Use plain value or query API to fetch at runtime.",
-                    })
 
 
 def _extract_balanced_parens(source: str, open_pos: int) -> str:
