@@ -1,7 +1,7 @@
 ---
 name: alibabacloud-script-recommend
 description: >
-  Generate Alibaba Cloud MCP Core RunScript-compatible Python scripts (using `call_cli()`, not `AlibabaCloud__CallCLI` in the MCP tool)
+  Generate Alibaba Cloud MCP Core RunScript-compatible Python scripts 
   from natural-language cloud operation requests. Use when the user explicitly asks for
   RunScript scripts, MCP Core scripts, or sandbox-compatible cloud automation code.
   For standard SDK Python code with imports and credentials, use `alibabacloud-sdk-usage` instead.
