@@ -35,11 +35,6 @@ do not run them unless the user explicitly asks.
 - **CLI syntax & troubleshooting reference** → `alibabacloud-cli-guidance`: the knowledge base
   for plugin vs built-in routing, `--biz-` naming, auth, install, and error fixes. Read it when
   you need rules; this skill is the *generation + validation* loop on top of those rules.
-- **RunScript sandbox Python** → `alibabacloud-script-recommend`: generates `call_cli(product,
-  version, action, params)` Python for the sandbox, not CLI command strings.
-- **SDK project code** → `alibabacloud-sdk-usage`: typed/generic SDK code for user projects.
-- **Operational patterns** (batch ops, audits, rotations, runbooks) → `alibabacloud-find-skills`
-  first — a packaged official skill usually beats a hand-rolled CLI sequence.
 
 ## Workflow
 
