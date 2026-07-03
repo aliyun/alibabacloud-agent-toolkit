@@ -87,14 +87,14 @@ do not run them unless the user explicitly asks.
 6. Write the command string(s) to `/tmp/aliyun-cli-commands.sh` (one per line) and validate with
    the local checker:
 
-```bash
-cat > /tmp/aliyun-cli-commands.sh <<'SHEOF'
-<aliyun command strings here, one per line>
-SHEOF
-python3 <SKILL_DIR>/script/check_cli.py /tmp/aliyun-cli-commands.sh
-```
+   ```bash
+   cat > /tmp/aliyun-cli-commands.sh <<'SHEOF'
+   <aliyun command strings here, one per line>
+   SHEOF
+   python3 <SKILL_DIR>/script/check_cli.py /tmp/aliyun-cli-commands.sh
+   ```
 
-Where `<SKILL_DIR>` is the directory containing this SKILL.md file.
+   Where `<SKILL_DIR>` is the directory containing this SKILL.md file.
 
 7. If validation fails, read the `-> fix` suggestion for each violation, fix ONLY the listed
    issues, and re-validate. Maximum 3 rounds. If violations persist, show them to the user.
@@ -117,7 +117,7 @@ Enforced by `script/check_cli.py` (local pre-check). On failure, read each viola
 | — | **Dependent steps** | Chain dependent operations by showing separate command lines with a `<placeholder>` for values carried on a previous command's output — never wire them with `$(...)`. |
 | — | **OSS / ossutil** | OSS has custom commands (`aliyun oss cp/ls/mb`, `aliyun ossutil sync`), not OpenAPI actions. File operations (`cp`, `sync`) need local filesystem access and must use the Bash tool, not CallCLI. |
 | — | **Structured params** | Lists are space-separated (`--security-group-ids sg-1 sg-2`); repeatable key-values use repeated flags (`--tag Key=env Value=prod`); complex structures use single-quoted JSON (`--data-disk '{"Size":100}'`). |
-| — | **Output filtering** | Use `--cli-query "<jmespath>"` to filter, `--output table|json|cols=...` to format, `--pager` / `--page-size` for pagination, `--waiter expr='Status' to='Available'` to wait. |
+| — | **Output filtering** | Use `--cli-query "<jmespath>"` to filter, `--output table, json, or cols=...` to format, `--pager` / `--page-size` for pagination, `--waiter expr='Status' to='Available'` to wait. |
 | — | **No auto-exec** | Suggest the command string(s) only. Do not call MCP `CallCLI` or run `aliyun` locally unless the user explicitly asks. |
 | — | **Output format** | Output the command string(s) in one code block. Keep prose minimal — at most a one-line note about required params or `--help`. |
 
