@@ -6,8 +6,8 @@ This plugin includes:
 
 - Plugin manifests for Codex and Claude Code
 - An MCP server named `alibabacloud-core` that covers all Alibaba Cloud OpenAPIs
-- Skills for SDK code generation, Terraform HCL generation, multi-account
-  resource querying, and MCP Core best practices
+- Skills for SDK code generation, Terraform HCL generation, Terraform import,
+  multi-account resource querying, and MCP Core best practices
 
 ## Install
 
@@ -55,6 +55,7 @@ environments, configure a safety policy to restrict the callable command set:
 |-------|-------------|
 | `alibabacloud-sdk-usage` | Generate or modify Alibaba Cloud SDK code using OpenAPI metadata |
 | `alibabacloud-terraform-code-generation` | Generate validated Alibaba Cloud Terraform HCL from natural language using alibabacloud-core MCP metadata, docs, and remote IaCService validation |
+| `alibabacloud-terraform-import` | Import existing Alibaba Cloud resources into Terraform management with discovery, HCL generation, state import, and drift validation |
 | `alibabacloud-multi-account-query` | Query resources across RD member accounts by alias |
 | `alibabacloud-mcp-core-best-practices` | Shared reference for MCP Core tool usage patterns |
 | `alibabacloud-find-skills` | Search and install Alibaba Cloud official skills when this plugin's built-in skills don't cover the user's task |
