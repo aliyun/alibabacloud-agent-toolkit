@@ -5,14 +5,14 @@ description: >
   from natural-language cloud operation requests. Use when the user explicitly asks for
   RunScript scripts, MCP Core scripts, or sandbox-compatible cloud automation code.
   For standard SDK Python code with imports and credentials, use `alibabacloud-sdk-usage` instead.
-triggers: >
-  RunScript, RunScript脚本, MCP脚本, 沙箱脚本,
-  generate RunScript, MCP Core script, script recommend
 license: Apache-2.0
 metadata:
   domain: aliyun-runscript
   owner: sdk-team
   contact: sdk-team@alibabacloud.com
+  triggers: >
+    RunScript, RunScript脚本, MCP脚本, 沙箱脚本,
+    generate RunScript, MCP Core script, script recommend
 allowed-tools: "mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___SearchApis,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___GetApiDefinition,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___ListApis,mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___ListProducts"
 ---
 
@@ -20,7 +20,7 @@ allowed-tools: "mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud___
 
 Turn a natural-language Alibaba Cloud request into one RunScript-compatible Python script.
 The script must use `await call_cli(...)`, assign the final value to `result`, and pass
-python-safety validation before output. Do not execute the script unless the user asks.
+`check_sandbox.py` validation before output. Do not execute the script unless the user asks.
 
 ## Scope Check Before You Start
 
@@ -32,28 +32,35 @@ python-safety validation before output. Do not execute the script unless the use
 
 ## Workflow
 
-1. Split the request into atomic cloud operations. For each operation, verify the product,
-   API name, version, and required parameters using MCP tools — do not guess.
+1. Split the request into atomic cloud operations. For each operation, you must call at
+   least one of the following methods to discover API parameters before writing any code:
 
-1. Search APIs for operations whose API you are uncertain about. Use
-   `AlibabaCloud___SearchApis` with a natural language description. Keep to one parallel batch.
+   **Method A — MCP tools** (preferred): call `AlibabaCloud___SearchApis` with a natural
+   language description, then `AlibabaCloud___GetApiDefinition` with the confirmed product,
+   action, and version. Batch search calls in one parallel round.
 
-1. Read API definitions to confirm exact parameter names and types. Use
-   `AlibabaCloud___GetApiDefinition` with product, action, and version. Do not skip this
-   step for unfamiliar APIs.
+   **Method B — HTTP metadata** (when MCP tools return errors):
+   The endpoint `https://next.api.aliyun.com/meta/v1/products/{product}/versions/{version}/api-docs.json`
+   contains all API definitions for a product. If `WebFetch` cannot extract the target
+   API (response too large), download the full JSON with `curl` and extract the target
+   API's `parameters` array using `python3 -c "import json,sys; ..."` or `grep`.
+
+   You must actually execute one of these methods — reading about them is not sufficient.
+   Only if your tool call returns an error may you fall back to best-known parameter names,
+   adding: `# WARNING: API parameters not verified — confirm before use`.
 
 1. Generate one Python script body following the Sandbox Contract and Script Patterns below.
-   Only whitelisted modules may be imported. When multiple tool calls are needed, batch them in parallel. Never repeat
-   the same tool call with the same arguments.
+   Only whitelisted modules may be imported. When multiple tool calls are needed, batch them
+   in parallel. Never repeat the same tool call with the same arguments.
 
 1. Write to `/tmp/aliyun-runscript.py` and validate with the local sandbox checker
-   (`<SKILL_DIR>/script/check_sandbox.py`):
+   (`<SKILL_DIR>/scripts/check_sandbox.py`):
 
    ```bash
    cat > /tmp/aliyun-runscript.py <<'PYEOF'
    <script body here>
    PYEOF
-   python3 <SKILL_DIR>/script/check_sandbox.py /tmp/aliyun-runscript.py
+   python3 <SKILL_DIR>/scripts/check_sandbox.py /tmp/aliyun-runscript.py
    ```
 
 1. If validation fails, read the `→ fix` suggestion for each violation, fix ONLY the listed
@@ -64,16 +71,17 @@ python-safety validation before output. Do not execute the script unless the use
 
 ## Sandbox Contract
 
-All rules below are enforced by `script/check_sandbox.py` (local pre-check) and remote validation.
+All rules below are enforced by `scripts/check_sandbox.py` (local pre-check) and remote validation.
 See `references/runscript-contract.md` for full definitions with examples.
 
 | Category | Rule |
 |----------|------|
 | **Imports** | Only whitelisted modules may be imported: `asyncio`, `collections`, `csv`, `dataclasses`, `datetime`, `decimal`, `enum`, `fractions`, `functools`, `itertools`, `json`, `math`, `re`, `statistics`, `string`, `time`, `typing`, `uuid`. Do NOT import `random`, `os`, `subprocess`, `requests`, or any module not in this list. `call_cli` is pre-injected — do NOT import or define it. |
 | **API calls** | Use ONLY `call_cli(product, version, action, params)`. Pre-injected. No SDK clients, no HTTP requests, no subprocess. Parameter values must be plain strings/numbers — do NOT pass `aliyun ...` CLI command strings as parameter values. |
-| **Param values** | Parameter values must NOT contain lowercase `aliyun` (triggers BLK-4001). E.g. use `"1.28.3"` not `"1.28.3-aliyun.1"`. Query APIs to fetch exact values when unsure. |
+| **Param values** | Parameter values must be plain strings/numbers — do NOT pass `aliyun ...` CLI command strings as parameter values. Query APIs to fetch exact values when unsure. |
 | **Output** | Assign final data to `result` (dict or list). No `print()`. |
-| **Forbidden** | `os`, `subprocess`, `socket`, `requests`, `eval`, `exec`, `compile`, `getattr`, `setattr`, `globals`, `input`, `breakpoint`, `__import__`, dunder chains. |
+| **Concurrency** | Parallel API calls must use `asyncio.gather(return_exceptions=True)`. Thread/process-based concurrency (`threading`, `multiprocessing`, `concurrent.futures`) is not in the whitelist and will fail validation. |
+| **Forbidden** | `os`, `subprocess`, `socket`, `requests`, `eval`, `exec`, `compile`, `getattr`, `setattr`, `globals`, `input`, `breakpoint`, `__import__`, `threading`, `multiprocessing`, `concurrent.futures`, dunder chains. |
 | **Blocked APIs** | Credential-returning APIs (`ram.ListAccessKeys`, `sts.AssumeRole`, `kms.GetSecretValue`). CLI meta products (`configure`, `plugin`, `ossutil`). |
 | **Structure** | `call_cli` must be reachable from module-level execution. Do NOT wrap all calls in an uninvoked `async def` — either write `await call_cli(...)` at top level, or define a function and call it: `async def main(): ... \n await main()`. |
 | **Numbers** | Do NOT use leading zeros in numeric literals (e.g., `01`, `010`). Write `1`, `10` instead. IP addresses and CIDR blocks must be strings: `"10.0.0.0/8"`, not bare numbers. |
@@ -123,6 +131,8 @@ result = {rid: r if isinstance(r, dict) else {"error": str(r)} for rid, r in zip
 - Do not generate boilerplate, redundant error handling, or unused imports.
 - Always validate before output. Do not skip validation.
 - If the request is ambiguous but not dangerous, use placeholders instead of asking.
+  Use the pre-injected runtime variable (e.g. `region_id`) or a string placeholder
+  like `"<your-vpc-name>"`.
 
 ## References
 

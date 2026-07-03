@@ -57,7 +57,7 @@ Parameter values containing lowercase `aliyun` are blocked as suspected CLI comm
 | ❌ Blocked | ✅ Safe |
 |---|---|
 | `"1.28.3-aliyun.1"` (K8s version) | `"1.28.3"` (plain semver) |
-| `"aliyun ecs Describe..."` | `"aliyun_2_1903_x64_20G"` (`aliyun_` prefix OK) |
+| `"aliyun ecs describe-instances..."` | `"aliyun_2_1903_x64_20G"` (`aliyun_` prefix OK) |
 | `"myhost.aliyun.com"` | `"Aliyun-Service"` (capitalized OK) |
 
 **Fix:** Use plain values or query APIs (e.g. `DescribeKubernetesVersion`) to fetch at runtime.
@@ -109,6 +109,6 @@ for rid, resp in zip(region_ids, responses):
 
 ## Local Validation
 
-Use `script/check_sandbox.py` for fast pre-checks before output.
+Use `scripts/check_sandbox.py` for fast pre-checks before output.
 
 Each violation includes a `→ fix` suggestion with actionable remediation.
