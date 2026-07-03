@@ -53,7 +53,34 @@ do not run them unless the user explicitly asks.
    `AlibabaCloud___GetApiDefinition` with product, action, and version. Do not skip this step
    for unfamiliar APIs.
 
-4. Generate the command with `AlibabaCloud___GenerateCLICommand` (product, version, action,
+4. Build `jsonApiParameters` from the API definition before generating the command. Prefer
+   user-provided values. For missing values needed to make a useful suggestion, create reasonable
+   mock values from the parameter structure returned by `GetApiDefinition`:
+
+   - Use exact OpenMeta parameter names; never invent names from CLI flags or memory.
+   - Include parameters marked required, plus small harmless shaping parameters for list/query APIs
+     when useful (for example `PageSize: 10`, `MaxItems: 10`, or `max-keys: 10`) only if those
+     parameters exist in the definition.
+   - For region-like parameters, use the user's region when present; otherwise use `cn-hangzhou`.
+   - For IDs, use realistic placeholders with the correct service prefix, such as
+     `i-test1234567890`, `vpc-test1234567890`, `vsw-test1234567890`, `sg-test1234567890`, or
+     `eipalloc-test1234567890`.
+   - For names and descriptions, use short safe placeholders such as `test-vpc`, `test-sg`, or
+     `updated by static cli test`.
+   - For CIDR and network fields, use documentation-style private/test ranges such as
+     `10.0.0.0/8`, `10.0.1.0/24`, or `203.0.113.0/24`.
+   - For enums and booleans, choose conservative valid-looking values from the parameter
+     description or examples, such as `tcp`, `accept`, `PayByTraffic`, `EcsInstance`, or `false`.
+   - For integer sizes/counts/bandwidths, use small values such as `1`, `5`, or `10`.
+   - For arrays/objects, preserve the schema shape: pass arrays as JSON arrays and objects as JSON
+     objects in `jsonApiParameters`; do not flatten them into guessed CLI flags.
+   - If a required parameter cannot be mocked safely from the definition, use a clear placeholder
+     value like `<instance-id>` and mention that it must be replaced.
+
+   Treat mock values as examples only. Do not execute generated commands unless the user explicitly
+   asks.
+
+5. Generate the command with `AlibabaCloud___GenerateCLICommand` (product, version, action,
    params). From the response, take **`unifiedCli`** verbatim as the `aliyun ...` string for
    MCP `CallCLI`. If **`unifiedCli` is empty**, take **`cli`** instead. Do NOT manually rewrite,
    re-case, or word-split either field — GenerateCLICommand already emits the correct subcommand
@@ -62,7 +89,7 @@ do not run them unless the user explicitly asks.
    definition. When multiple independent calls are needed, batch the MCP lookups in parallel.
    Never repeat the same tool call with identical arguments.
 
-5. Write the command string(s) to `/tmp/aliyun-cli-commands.sh` (one per line) and validate with
+6. Write the command string(s) to `/tmp/aliyun-cli-commands.sh` (one per line) and validate with
    the local checker:
 
 ```bash
@@ -74,10 +101,10 @@ python3 <SKILL_DIR>/script/check_cli.py /tmp/aliyun-cli-commands.sh
 
 Where `<SKILL_DIR>` is the directory containing this SKILL.md file.
 
-6. If validation fails, read the `-> fix` suggestion for each violation, fix ONLY the listed
+7. If validation fails, read the `-> fix` suggestion for each violation, fix ONLY the listed
    issues, and re-validate. Maximum 3 rounds. If violations persist, show them to the user.
 
-7. After validation passes, output the command string(s) in a single code block — each line is a
+8. After validation passes, output the command string(s) in a single code block — each line is a
    value you would pass as the `command` argument of MCP `CallCLI`. Optionally add a one-line note
    about required parameters or `--help`. Do not execute them.
 
