@@ -8,6 +8,7 @@
 set +e
 umask 077
 
+
 if [ "${ALIBABACLOUD_TELEMETRY}" = "false" ]; then
     exit 0
 fi
@@ -74,6 +75,15 @@ payload=$(head -c 65536)
 client=$(detect_client_bash "$payload")
 cdir=$(state_dir_for_client "$client")
 
+# Dump raw payload to debug.log for diagnosis
+if [ "${ALIBABACLOUD_TELEMETRY_DEBUG}" = "1" ]; then
+    {
+        printf '[%s] [stop] raw-payload (%d bytes):\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${#payload}"
+        printf '%s\n' "$payload" | head -c 4096
+        printf '\n---end-payload---\n'
+    } >> "$cdir/debug.log" 2>/dev/null
+fi
+
 if [ "${ALIBABACLOUD_TELEMETRY_TRACE_PAYLOAD}" = "1" ]; then
     payloadDir="$cdir/raw-payloads"
     mkdir -p "$payloadDir" 2>/dev/null && chmod 700 "$payloadDir" 2>/dev/null
@@ -134,8 +144,29 @@ fi
 
 # Fire-and-forget: detach so the agent loop never waits on uvx.
 debug_log "$cdir" "[stop] decision=upload event=$(extract_arg --event-type "${args[@]}")"
-( uvx alibabacloud.mcp-proxy@latest plugin-telemetry "${args[@]}" \
-    </dev/null >/dev/null 2>&1 & ) >/dev/null 2>&1
-disown 2>/dev/null
+
+if [ "${ALIBABACLOUD_TELEMETRY_DEBUG}" = "1" ]; then
+    # Debug mode: capture uvx output for diagnosis instead of discarding
+    {
+        printf '[%s] [stop] upload-start cmd=uvx alibabacloud.mcp-proxy@latest plugin-telemetry' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        for a in "${args[@]}"; do printf ' %q' "$a"; done
+        printf '\n'
+    } >> "$cdir/debug.log" 2>/dev/null
+    (
+        uvx_out=$(uvx alibabacloud.mcp-proxy@latest plugin-telemetry "${args[@]}" </dev/null 2>&1)
+        uvx_rc=$?
+        {
+            printf '[%s] [stop] upload-done rc=%d\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$uvx_rc"
+            if [ -n "$uvx_out" ]; then
+                printf '[%s] [stop] upload-output: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$uvx_out"
+            fi
+        } >> "$cdir/debug.log" 2>/dev/null
+    ) &
+    disown 2>/dev/null
+else
+    ( uvx alibabacloud.mcp-proxy@latest plugin-telemetry "${args[@]}" \
+        </dev/null >/dev/null 2>&1 & ) >/dev/null 2>&1
+    disown 2>/dev/null
+fi
 
 exit 0

@@ -4,6 +4,7 @@
 set +e
 umask 077
 
+
 detect_client_bash() {
     if [ "$COPILOT_CLI" = "1" ]; then echo "copilot-cli"; return; fi
     if [ "$CODEX_CLI" = "1" ]; then echo "codex"; return; fi
@@ -58,6 +59,15 @@ scriptDir="$(cd "$(dirname "$0")" && pwd)"
 payload=$(head -c 65536)
 client=$(detect_client_bash "$payload")
 cdir=$(state_dir_for_client "$client")
+
+# Dump raw payload to debug.log for diagnosis
+if [ "${ALIBABACLOUD_TELEMETRY_DEBUG}" = "1" ]; then
+    {
+        printf '[%s] [pre-tool] raw-payload (%d bytes):\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${#payload}"
+        printf '%s\n' "$payload" | head -c 4096
+        printf '\n---end-payload---\n'
+    } >> "$cdir/debug.log" 2>/dev/null
+fi
 
 if [ "${ALIBABACLOUD_TELEMETRY_TRACE_PAYLOAD}" = "1" ]; then
     payloadDir="$cdir/raw-payloads"
