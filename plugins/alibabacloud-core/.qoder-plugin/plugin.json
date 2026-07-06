@@ -13,7 +13,6 @@
   "homepage": "https://github.com/aliyun/alibabacloud-agent-toolkit",
   "repository": "https://github.com/aliyun/alibabacloud-agent-toolkit",
   "license": "Apache-2.0",
-  "skills": "./skills/",
   "hooks": "./hooks/qoderwork-hooks.json",
   "mcpServers": "./.mcp.json"
 }
