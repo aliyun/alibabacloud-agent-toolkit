@@ -79,6 +79,13 @@ Do not split one user task across multiple `RunScript` submissions just to
 inspect intermediate data. Put discovery, pagination, filtering, and follow-up
 Describe/Get calls in one self-contained script and return via `result`.
 
+**Chargeable operations: quote before executing.** If the command creates,
+resizes, renews, or otherwise changes billable resources, first run the same
+command with `--estimate-cost` appended (quote only, no execution) and include
+the quoted amount in the user-facing confirmation. See
+[Cost Estimation Before Execution](#cost-estimation-before-execution) and the
+`alibabacloud-cli-cost-estimation` skill.
+
 ### 5. Single-Call Execution
 
 Use `AlibabaCloud___CallCLI` to execute the generated command. Key constraints:
@@ -203,6 +210,29 @@ For Resource Directory member accounts, pass additional parameters to
 
 Priority: `x_assume_role_arn` > `x_assume_account_id` + `x_assume_role_name` >
 default configuration.
+
+## Cost Estimation Before Execution
+
+The CLI (≥ 3.4.2) can return an exact price quote for a supported operation
+without executing it — the quoted amount equals the order amount the execution
+would produce. The best-practice loop for any chargeable operation:
+
+1. Check support: `aliyun list-supported-pricing-apis`
+2. Quote: append `--estimate-cost` to the exact command (safe — never executes)
+3. Present the amount in the confirmation shown to the user
+4. Execute only after confirmation, with `--estimate-cost` removed
+
+When one user request maps to **multiple** API calls, quote all chargeable
+steps up front (using `--estimate-cost-context` to simulate the state earlier
+steps will produce), present a single consolidated cost plan, and ask one
+confirmation for the whole sequence — do not execute-and-ask step by step.
+
+For usage-based quotes and multi-step workflows (quoting a later step against
+the state an earlier step will produce), pass assumptions via
+`--estimate-cost-context Key=Value`. Full guidance — reading the quote JSON
+(`pricingMode` / `pricingUnit` / delta amounts), PricingContext usage, and
+bill reconciliation — lives in the dedicated
+`alibabacloud-cli-cost-estimation` skill.
 
 ## Infrastructure as Code (RunIaC)
 
