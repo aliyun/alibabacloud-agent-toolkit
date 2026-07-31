@@ -15,6 +15,7 @@ The repository currently provides:
 - A top-level project scaffold for marketplace manifests, validation, CI, rules, and shared skills.
 - Two active plugins: [`alibabacloud-core`](plugins/alibabacloud-core/) and [`alibabacloud-spec-ops`](plugins/alibabacloud-spec-ops/).
 - Placeholder plugin directories for future agent and data analytics plugins.
+- Support for **Qoder** and **QoderWork** series agents — plugins ship `.qoder-plugin/` manifests and `qoderwork-hooks.json` hook configs, with client auto-detection via the `QODER_WORK=1` environment variable.
 
 `alibabacloud-core` includes an SDK usage skill that generates Alibaba Cloud OpenAPI interaction code through a constrained MCP server. `alibabacloud-spec-ops` delivers a planning-to-execution workflow for Alibaba Cloud infrastructure operations driven by Terraform and IaC Service.
 
@@ -86,7 +87,7 @@ brew install aliyun-cli
 npx openplugin aliyun/alibabacloud-agent-toolkit
 ```
 
-Automatically detects installed clients (Claude Code, Codex, QoderWork), lets you pick which plugins to install, and configures everything.
+Automatically detects installed clients (Claude Code, Codex, Qoder, QoderWork), lets you pick which plugins to install, and configures everything.
 
 ### Manual install
 
@@ -106,6 +107,10 @@ Then open Codex `/plugins` and install `alibabacloud-core` and/or `alibabacloud-
 /plugin install alibabacloud-spec-ops@alibabacloud-agent-toolkit
 /reload-plugins
 ```
+
+#### Qoder
+
+Use the one-command install above (`npx openplugin`), which handles Qoder plugin registration automatically. Plugins are installed from the `.qoder-plugin/` manifests and use the same hook set as QoderWork.
 
 #### QoderWork
 
@@ -153,7 +158,7 @@ All fields below describe Alibaba Cloud plugin behavior only.
 | Field | Description |
 |---|---|
 | startTimestamp / endTimestamp | Alibaba Cloud tool call start and end time (ISO 8601 UTC) |
-| clientName | Agent client type (`claude-code`, `codex`, `copilot-cli`, `qoderwork`, `vscode`) |
+| clientName | Agent client type (`claude-code`, `codex`, `copilot-cli`, `qoder`, `qoderwork`, `vscode`) |
 | eventType | Alibaba Cloud event category (`skill_invocation`, `mcp_tool_use`, `cli_command_use`, `subagent_dispatch`, `reference_file_read`, `user_prompt_turn_start`, `llm_call`) |
 | sessionId / mcpSessionId | Session identifiers used for correlation; not linked to an Alibaba Cloud account by this toolkit |
 | skillName / pluginName / skillTag | Alibaba Cloud skill and plugin identity |
@@ -253,7 +258,7 @@ Data sources scanned automatically:
 | 字段 | 说明 |
 |---|---|
 | startTimestamp / endTimestamp | 阿里云工具调用的开始和结束时间（ISO 8601 UTC） |
-| clientName | Agent 客户端类型（`claude-code`、`codex`、`copilot-cli`、`qoderwork`、`vscode`） |
+| clientName | Agent 客户端类型（`claude-code`、`codex`、`copilot-cli`、`qoder`、`qoderwork`、`vscode`） |
 | eventType | 阿里云事件类别（`skill_invocation`、`mcp_tool_use`、`cli_command_use`、`subagent_dispatch`、`reference_file_read`、`user_prompt_turn_start`、`llm_call`） |
 | sessionId / mcpSessionId | 用于关联的会话标识；本工具包不会将其关联到阿里云账号 |
 | skillName / pluginName / skillTag | 阿里云 skill 和插件标识 |
