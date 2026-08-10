@@ -13,12 +13,11 @@
       "description": "Core Alibaba Cloud plugin for OpenAPI SDK code generation through a constrained MCP server.",
       "keywords": [
         "alibabacloud",
-        "aliyun",
-        "cloud"
+        "aliyun"
       ],
       "name": "alibabacloud-core",
       "source": "./plugins/alibabacloud-core",
-      "version": "1.0.20"
+      "version": "1.0.29"
     },
     {
       "category": "cloud",
