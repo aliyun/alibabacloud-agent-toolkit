@@ -1,0 +1,15 @@
+{
+  "author": {
+    "name": "Alibaba Cloud"
+  },
+  "description": "Core Alibaba Cloud plugin for OpenAPI SDK code generation through a constrained MCP server.",
+  "homepage": "https://github.com/aliyun/alibabacloud-agent-toolkit",
+  "keywords": [
+    "alibabacloud",
+    "aliyun"
+  ],
+  "license": "Apache-2.0",
+  "name": "alibabacloud-core",
+  "repository": "https://github.com/aliyun/alibabacloud-agent-toolkit",
+  "version": "1.0.32"
+}
