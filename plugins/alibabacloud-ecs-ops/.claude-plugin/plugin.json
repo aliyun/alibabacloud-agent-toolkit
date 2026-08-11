@@ -13,5 +13,5 @@
   "license": "Apache-2.0",
   "name": "alibabacloud-ecs-ops",
   "repository": "https://github.com/acloudlabs-unofficial/agent-plugins",
-  "version": "0.0.2"
+  "version": "0.0.3"
 }
