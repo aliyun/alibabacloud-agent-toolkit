@@ -1,0 +1,21 @@
+{
+  "author": {
+    "name": "Alibaba Cloud"
+  },
+  "description": "Alibaba Cloud AI Ops Plugin - Infrastructure operations workflow with intelligent planning, validation, and execution powered by MCP tooling.",
+  "homepage": "https://github.com/aliyun/alibabacloud-agent-toolkit",
+  "keywords": [
+    "alibabacloud",
+    "aliyun",
+    "cloud",
+    "infrastructure",
+    "terraform",
+    "iac",
+    "ops",
+    "devops"
+  ],
+  "license": "Apache-2.0",
+  "name": "alibabacloud-spec-ops",
+  "repository": "https://github.com/aliyun/alibabacloud-agent-toolkit",
+  "version": "0.1.5"
+}

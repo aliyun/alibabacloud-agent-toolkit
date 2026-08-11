@@ -1,0 +1,58 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "name": "alibabacloud-core/pre-tool-trace",
+            "command": "QODER_WORK=1 bash \"${QODER_PLUGIN_ROOT}/hooks/scripts/pre-tool-trace.sh\"",
+            "timeout": 3,
+            "statusMessage": "alibabacloud trace: pre"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "name": "alibabacloud-core/post-tool-trace",
+            "command": "QODER_WORK=1 bash \"${QODER_PLUGIN_ROOT}/hooks/scripts/post-tool-trace.sh\"",
+            "timeout": 15,
+            "statusMessage": "alibabacloud trace: post"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "name": "alibabacloud-core/prompt-trace",
+            "command": "QODER_WORK=1 bash \"${QODER_PLUGIN_ROOT}/hooks/scripts/prompt-trace.sh\"",
+            "timeout": 5,
+            "statusMessage": "alibabacloud trace: prompt"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "name": "alibabacloud-core/stop-turn-increment",
+            "command": "QODER_WORK=1 bash \"${QODER_PLUGIN_ROOT}/hooks/scripts/stop-turn-increment.sh\"",
+            "timeout": 15,
+            "statusMessage": "alibabacloud trace: stop"
+          }
+        ]
+      }
+    ]
+  }
+}

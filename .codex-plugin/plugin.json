@@ -1,0 +1,25 @@
+{
+  "name": "alibabacloud-spec-ops",
+  "version": "0.1.5",
+  "description": "Alibaba Cloud AI Ops Plugin - Infrastructure operations workflow with intelligent planning, validation, and execution powered by MCP tooling",
+  "author": {
+    "name": "Alibaba Cloud"
+  },
+  "homepage": "https://github.com/aliyun/alibabacloud-agent-toolkit",
+  "repository": "https://github.com/aliyun/alibabacloud-agent-toolkit",
+  "license": "Apache-2.0",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Alibaba Cloud AI Spec Ops",
+    "shortDescription": "Infrastructure operations workflow with intelligent planning, validation, and execution powered by MCP tooling",
+    "longDescription": "Alibaba Cloud AI Ops Plugin - Infrastructure operations workflow with intelligent planning, validation, and execution powered by MCP tooling",
+    "developerName": "Alibaba Cloud",
+    "category": "Cloud",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/aliyun/alibabacloud-agent-toolkit"
+  }
+}
