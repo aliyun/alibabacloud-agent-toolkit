@@ -1,0 +1,17 @@
+{
+  "author": {
+    "name": "Alibaba Cloud"
+  },
+  "description": "Alibaba Cloud ECS 全生命周期运维管理插件，覆盖实例管理、诊断排障、磁盘快照、安全组网络及场景化运维，集成操作前成本评估能力",
+  "homepage": "https://github.com/acloudlabs-unofficial/agent-plugins",
+  "keywords": [
+    "alibabacloud",
+    "aliyun",
+    "ecs",
+    "ops"
+  ],
+  "license": "Apache-2.0",
+  "name": "alibabacloud-ecs-ops",
+  "repository": "https://github.com/acloudlabs-unofficial/agent-plugins",
+  "version": "0.0.4"
+}
