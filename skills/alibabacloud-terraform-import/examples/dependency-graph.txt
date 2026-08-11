@@ -1,0 +1,55 @@
+=== 资源依赖关系图示例 ===
+Region: cn-hangzhou
+生成时间: 2026-04-22
+
+[网络层]
+alicloud_vpc.vpc_prod_main (vpc-bp1xxx, 10.0.0.0/8)
+  ├── alicloud_vswitch.vsw_prod_a (vsw-bp1xxx, 10.0.1.0/24, zone: cn-hangzhou-h)
+  │     ├── alicloud_instance.ecs_web_01 (i-bp1xxx, ecs.c6.large)
+  │     │     └── alicloud_disk_attachment.disk_attach_01
+  │     │           └── alicloud_disk.disk_data_01 (d-bp1xxx, 100GB ESSD)
+  │     ├── alicloud_db_instance.rds_app (rm-bp1xxx, MySQL 8.0)
+  │     │     ├── alicloud_db_database.db_app_main
+  │     │     └── alicloud_db_account.dba_app
+  │     ├── alicloud_kvstore_instance.redis_cache (r-bp1xxx, Redis 7.0)
+  │     └── alicloud_mongodb_instance.mongo_app (dds-bp1xxx, MongoDB 6.0)
+  │
+  ├── alicloud_vswitch.vsw_prod_b (vsw-bp2xxx, 10.0.2.0/24, zone: cn-hangzhou-i)
+  │     └── alicloud_instance.ecs_web_02 (i-bp2xxx, ecs.c6.large)
+  │
+  ├── alicloud_nat_gateway.nat_prod (ngw-bp1xxx, Enhanced)
+  │     ├── alicloud_eip_association.eip_assoc_nat
+  │     │     └── alicloud_eip_address.eip_nat (eip-bp1xxx, 1.2.3.4)
+  │     ├── alicloud_snat_entry.snat_prod_a (vsw_prod_a -> eip_nat)
+  │     └── alicloud_snat_entry.snat_prod_b (vsw_prod_b -> eip_nat)
+  │
+  └── alicloud_slb_load_balancer.slb_web (lb-bp1xxx, intranet)
+        ├── alicloud_slb_listener.slb_listener_80 (HTTP:80)
+        └── alicloud_slb_attachment.slb_attach_web
+              ├── alicloud_instance.ecs_web_01 (weight: 100)
+              └── alicloud_instance.ecs_web_02 (weight: 100)
+
+[安全层]
+alicloud_security_group.sg_web (sg-bp1xxx)
+  ├── alicloud_security_group_rule.sgr_web_ingress_80 (TCP 80, 0.0.0.0/0, accept)
+  ├── alicloud_security_group_rule.sgr_web_ingress_443 (TCP 443, 0.0.0.0/0, accept)
+  ├── alicloud_security_group_rule.sgr_web_egress_all (ALL, 0.0.0.0/0, accept)
+  ├── alicloud_instance.ecs_web_01 (引用)
+  └── alicloud_instance.ecs_web_02 (引用)
+
+[存储层]
+alicloud_oss_bucket.bucket_assets (my-assets-bucket, private, versioning: on)
+alicloud_oss_bucket.bucket_backup (my-backup-bucket, private, lifecycle: IA->Archive)
+
+[DNS 层]
+alicloud_dns_domain.domain_example (example.com)
+  ├── alicloud_dns_record.record_www (www.example.com -> SLB IP)
+  └── alicloud_dns_record.record_api (api.example.com -> SLB IP)
+
+=== 统计 ===
+网络资源:  8 个 (VPC:1, VSwitch:2, SG:1, EIP:1, NAT:1, SLB:1, SNAT:2)
+计算资源:  3 个 (ECS:2, Disk:1)
+存储资源:  2 个 (OSS:2)
+数据库资源: 3 个 (RDS:1, Redis:1, MongoDB:1)
+DNS 资源:  3 个 (Domain:1, Record:2)
+总计:     19 个资源
