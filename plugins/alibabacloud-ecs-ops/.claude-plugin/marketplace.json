@@ -1,0 +1,8 @@
+{
+  "name": "alibabacloud-ecs-ops",
+  "description": "Alibaba Cloud ECS 全生命周期运维管理插件",
+  "source": ".",
+  "keywords": ["alibabacloud", "aliyun", "ecs", "ops"],
+  "version": "0.3.0",
+  "category": "cloud"
+}

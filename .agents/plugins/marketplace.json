@@ -27,6 +27,18 @@
         "authentication": "ON_INSTALL"
       },
       "category": "Cloud"
+    },
+    {
+      "name": "alibabacloud-ecs-ops",
+      "source": {
+        "source": "local",
+        "path": "./plugins/alibabacloud-ecs-ops"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Cloud"
     }
   ]
 }
