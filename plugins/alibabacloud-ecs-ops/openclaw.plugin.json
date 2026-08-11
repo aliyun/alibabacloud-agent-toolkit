@@ -1,0 +1,14 @@
+{
+  "id": "alibabacloud-ecs-ops",
+  "name": "alibabacloud-ecs-ops",
+  "version": "0.0.4",
+  "description": "Alibaba Cloud ECS 全生命周期运维管理插件，覆盖实例管理、诊断排障、磁盘快照、安全组网络及场景化运维，集成操作前成本评估能力",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "skills": [
+    "skills"
+  ]
+}

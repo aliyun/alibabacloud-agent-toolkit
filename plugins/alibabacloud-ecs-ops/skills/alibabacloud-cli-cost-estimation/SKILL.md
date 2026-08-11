@@ -11,8 +11,9 @@ description: >
   and reconciling quotes against actual bills.
 triggers: >
   estimate cost, cost estimation, price quote, how much will it cost,
-  询价, 报价, 多少钱, 费用预估, 成本预估, 变配差价, 执行前费用,
-  estimate-cost, PricingContext, 计费预览, 账单预览, price before execution,
+  price inquiry, quotation, how much, cost estimate, cost estimate,
+  configuration change price, pre-execution cost,
+  estimate-cost, PricingContext, billing preview, bill preview, price before execution,
   chargeable operation, upgrade cost, renewal cost, bandwidth cost
 license: Apache-2.0
 metadata:
