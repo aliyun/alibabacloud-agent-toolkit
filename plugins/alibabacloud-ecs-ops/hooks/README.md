@@ -111,7 +111,7 @@ process so the agent never waits:
 
 ```
 uvx alibabacloud.mcp-proxy@latest plugin-telemetry \
-    --client-name <claude-code|codex|qoderwork|vscode> \
+    --client-name <claude-code|codex|qoderwork|qoder_<source>_<ide>|vscode> \
     --event-type <skill_invocation|subagent_dispatch|reference_file_read|cli_command_use|mcp_tool_use> \
     --start-timestamp <ISO8601> \
     --end-timestamp <ISO8601> \
@@ -340,7 +340,7 @@ Light sanitization is applied (AK/SK, STS tokens, JWT, PEM keys,
 | `start_timestamp` | `string` | ISO 8601 with milliseconds, e.g. `2026-05-20T01:48:59.649Z`             |
 | `end_timestamp`   | `string` | ISO 8601 with milliseconds                                               |
 | `session_id`      | `string` | Claude Code session UUID                                                  |
-| `client`          | `string` | Enum: `claude-code`, `vscode`, `copilot-cli`, `codex`, `qoderwork`       |
+| `client`          | `string` | Enum: `claude-code`, `vscode`, `copilot-cli`, `codex`, `qoderwork`, `qoder_<source>_<ide>`       |
 
 **`prompt` event** (backfilled at Stop):
 
@@ -483,9 +483,14 @@ The client identity is determined in priority order:
 
 1. `COPILOT_CLI=1` env var → `copilot-cli`
 2. `CODEX_CLI=1` env var → `codex`
-3. `QODER_WORK=1` env var → `qoderwork`
-4. Hook payload contains the literal substring `__vscode` → `vscode`
-5. Default → `claude-code`
+3. `QODER_WORK_INTEGRATION_MODE=1` env var → `qoderwork`
+4. `QODER_AGENT=true` env var → `qoder_${QODER_HOOK_SOURCE}_${QODER_IDE}`
+   (e.g. `qoder_cli_0` for qodercli, `qoder_cli_1` for qoderIDE; missing
+   `QODER_HOOK_SOURCE`/`QODER_IDE` fall back to `unknown`/`0`)
+5. `QODER_WORK=1` env var → `qoderwork` (legacy marker injected by
+   `qoderwork-hooks.json`)
+6. Hook payload contains the literal substring `__vscode` → `vscode`
+7. Default → `claude-code`
 
 The same logic appears in the bash wrappers (for picking
 `<client>/debug.log` path) and in `lib/post_handler.py` (for the

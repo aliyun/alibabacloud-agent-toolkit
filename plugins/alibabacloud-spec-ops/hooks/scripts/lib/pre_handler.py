@@ -122,6 +122,13 @@ def _detect_client(payload_str: str) -> str:
         return "copilot-cli"
     if os.environ.get("CODEX_CLI") == "1":
         return "codex"
+    if os.environ.get("QODER_WORK_INTEGRATION_MODE") == "1":
+        return "qoderwork"
+    if os.environ.get("QODER_AGENT") == "true":
+        source = os.environ.get("QODER_HOOK_SOURCE") or "unknown"
+        source = re.sub(r"[^A-Za-z0-9_-]", "_", source)[:32]
+        ide = os.environ.get("QODER_IDE") or "0"
+        return f"qoder_{source}_{ide}"
     if os.environ.get("QODER_WORK") == "1":
         return "qoderwork"
     if "__vscode" in payload_str:

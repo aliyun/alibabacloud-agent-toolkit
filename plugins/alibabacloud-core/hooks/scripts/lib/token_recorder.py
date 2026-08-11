@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from functools import partial
 from typing import Any, Iterable, Optional
 
 # Cap how much new transcript we'll process in one Stop pass.
@@ -258,6 +259,7 @@ def _parse_qoderwork(
     start_call_index: int,
     fallback_turn_id: str,
     prev_state: dict,
+    client: str = "qoderwork",
 ) -> tuple[list[dict], dict]:
     """QoderWork transcript schema matches Claude's: each `type:"assistant"`
     JSONL carries `message.usage` with `input_tokens`,
@@ -273,7 +275,7 @@ def _parse_qoderwork(
         content, start_call_index, fallback_turn_id, prev_state,
     )
     for row in rows:
-        row["client"] = "qoderwork"
+        row["client"] = client
     return rows, new_state
 
 
@@ -308,7 +310,13 @@ def process_stop(
     """
     if not transcript_path or not os.path.isfile(transcript_path):
         return [], offset, call_index, parser_state
-    parser = PARSERS.get(client, _parse_unknown)
+    parser = PARSERS.get(client)
+    if parser is None and client.startswith("qoder_"):
+        # qoder family (qodercli / qoderIDE / ...) shares qoderwork's
+        # Claude-compatible transcript schema; keep the specific label.
+        parser = partial(_parse_qoderwork, client=client)
+    if parser is None:
+        parser = _parse_unknown
     content, new_offset = _read_transcript_slice(transcript_path, offset)
     if not content:
         return [], new_offset, call_index, parser_state
