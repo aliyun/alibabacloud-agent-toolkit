@@ -71,14 +71,6 @@ def _iso_from_ms(ms: int) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S", t) + f".{millis:03d}Z"
 
 
-def _uploader_cmd() -> list:
-    """Resolve mcp-proxy invocation. Env var lets .sh override for dev."""
-    override = os.environ.get("ALIBABACLOUD_TELEMETRY_UPLOADER")
-    if override:
-        return override.split()
-    return ["uvx", "alibabacloud.mcp-proxy@latest", "plugin-telemetry"]
-
-
 _MCP_SESSION_DIR = os.path.expanduser(
     "~/.cache/alibabacloud-agent-toolkit/mcp-sessions"
 )
@@ -142,36 +134,60 @@ def _strip_optin_fields(args: dict) -> None:
 
 
 def _spawn_upload(args: dict) -> None:
-    """Fire-and-forget mcp-proxy upload for per-call events. The primary
-    user_prompt_turn_start event still flows via stdout to the .sh wrapper —
-    this is only for the N extra llm_call events that don't fit the
-    single-event stdout protocol."""
-    import subprocess
-    argv = list(_uploader_cmd())
+    """Queue an upload event for bounded background processing.
+
+    Replaces the old fire-and-forget uvx invocation that spawned one
+    unbounded process per event, causing orphan process accumulation
+    and disk exhaustion. Events are written to a per-client queue and
+    processed by a single-instance worker with concurrency and timeout
+    controls.
+    """
+    try:
+        from telemetry_enqueue import enqueue_event
+    except ImportError:
+        return
+
+    cdir = _resolve_cdir_for_upload()
+    if not cdir:
+        return
+
+    filtered = {}
     for key in _EMIT_ORDER:
         v = args.get(key)
-        if v is None or v == "":
-            continue
-        argv.append(f"--{key}")
-        argv.append(str(v))
-    log_path = os.environ.get("ALIBABACLOUD_TELEMETRY_UPLOAD_LOG")
-    if log_path:
-        try:
-            out_fd = open(log_path, "ab")
-        except Exception:
-            out_fd = subprocess.DEVNULL
-    else:
-        out_fd = subprocess.DEVNULL
+        if v is not None and v != "":
+            filtered[key] = str(v)
+    if not filtered:
+        return
+
     try:
-        subprocess.Popen(
-            argv,
-            stdin=subprocess.DEVNULL,
-            stdout=out_fd,
-            stderr=out_fd,
-            start_new_session=True,
-        )
+        enqueue_event(cdir, filtered, start_worker=True)
     except Exception:
         pass
+
+
+def _resolve_cdir_for_upload() -> "str | None":
+    """Resolve the per-client state directory for queue writes."""
+    base = os.environ.get("ALIBABACLOUD_TELEMETRY_STATE_DIR")
+    if not base:
+        base = os.path.expanduser(
+            "~/.cache/alibabacloud-agent-toolkit/telemetry"
+        )
+    client = "unknown"
+    if os.environ.get("COPILOT_CLI") == "1":
+        client = "copilot-cli"
+    elif os.environ.get("CODEX_CLI") == "1":
+        client = "codex"
+    elif os.environ.get("QODER_WORK") == "1":
+        client = "qoderwork"
+    else:
+        client = "claude-code"
+    safe = "".join(c if c.isalnum() or c in "_-" else "_" for c in client)[:64]
+    cdir = os.path.join(base, safe)
+    try:
+        os.makedirs(cdir, exist_ok=True)
+    except OSError:
+        return None
+    return cdir
 
 
 def _emit(args: dict) -> None:
@@ -343,11 +359,11 @@ def main() -> int:
                     "tool_tokens": {},
                 })
 
-            # --- Remote telemetry: per-LLM-call uploads (fire-and-forget) ---
+            # --- Remote telemetry: per-LLM-call uploads (queue-based) ---
             # These bypass the single-event stdout protocol because the .sh
-            # wrapper only fires one mcp-proxy invocation per hook trigger.
-            # Each call gets its own background uvx process; ordering in SLS
-            # is by start_timestamp (no callIndex needed, no model uploaded).
+            # wrapper only fires one upload per hook trigger. Each call is
+            # queued for the bounded worker; ordering in SLS is by
+            # start_timestamp (no callIndex needed, no model uploaded).
             if turn_has_trace and prompt_span and llm_calls:
                 for call in llm_calls:
                     upload_args = {

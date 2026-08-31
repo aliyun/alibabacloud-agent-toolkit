@@ -1,9 +1,10 @@
 #!/bin/bash
 # Post-tool-use hook wrapper. Delegates classification + status detection to
-# lib/post_handler.py, then fires `uvx alibabacloud.mcp-proxy@latest
-# plugin-telemetry` in the background. Always returns success to the agent.
+# lib/post_handler.py, then queues the event for bounded background upload.
+# Always returns success to the agent.
 set +e
 umask 077
+
 
 return_success() {
     echo '{"continue":true}'
@@ -83,6 +84,15 @@ payload=$(head -c 65536)
 client=$(detect_client_bash "$payload")
 cdir=$(state_dir_for_client "$client")
 
+# Dump raw payload to debug.log for diagnosis
+if [ "${ALIBABACLOUD_TELEMETRY_DEBUG}" = "1" ]; then
+    {
+        printf '[%s] [post-tool] raw-payload (%d bytes):\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${#payload}"
+        printf '%s\n' "$payload" | head -c 4096
+        printf '\n---end-payload---\n'
+    } >> "$cdir/debug.log" 2>/dev/null
+fi
+
 # Optional raw-payload trace: dump full stdin to a file so future bugs
 # can be diagnosed without guessing at the payload shape.
 if [ "${ALIBABACLOUD_TELEMETRY_TRACE_PAYLOAD}" = "1" ]; then
@@ -137,7 +147,7 @@ done
 # Dry-run mode: log instead of upload
 if [ "${ALIBABACLOUD_TELEMETRY_DRY_RUN}" = "1" ]; then
     {
-        printf 'DRYRUN: uvx alibabacloud.mcp-proxy@latest plugin-telemetry'
+        printf 'DRYRUN: queue telemetry event'
         for a in "${args[@]}"; do
             printf ' %q' "$a"
         done
@@ -147,10 +157,21 @@ if [ "${ALIBABACLOUD_TELEMETRY_DRY_RUN}" = "1" ]; then
     return_success
 fi
 
-# Fire-and-forget: detach so the agent loop never waits on uvx.
+# Queue-based upload: write event args to a JSON queue file and start
+# the bounded worker. Replaces the old fire-and-forget
+# `uvx alibabacloud.mcp-proxy@latest` pattern that spawned one
+# unbounded process per event, causing orphan process accumulation.
 debug_log "$cdir" "decision=upload event=$(extract_arg --event-type "${args[@]}") tool=$(extract_arg --tool-name "${args[@]}")"
-( uvx alibabacloud.mcp-proxy@latest plugin-telemetry "${args[@]}" \
-    </dev/null >/dev/null 2>&1 & ) >/dev/null 2>&1
-disown 2>/dev/null
+
+if [ "${ALIBABACLOUD_TELEMETRY_DEBUG}" = "1" ]; then
+    {
+        printf '[%s] [post-tool] enqueue event=%s tool=%s\n' \
+            "$(date -u +%Y%m%dT%H%M%SZ)" \
+            "$(extract_arg --event-type "${args[@]}")" \
+            "$(extract_arg --tool-name "${args[@]}")"
+    } >> "$cdir/debug.log" 2>/dev/null
+fi
+
+printf '%s\n' "${args[@]}" | python3 "$scriptDir/lib/telemetry_enqueue.py" "$cdir" 2>/dev/null
 
 return_success
