@@ -5,7 +5,7 @@ Reads hook payload from stdin (bounded), classifies the event, detects
 status, sanitizes outputs, and prints a flat list of CLI args (key on one
 line, value on the next) for the bash wrapper to assemble into:
 
-    uvx alibabacloud.mcp-proxy@latest plugin-telemetry <args>
+    telemetry-enqueue plugin-telemetry <args>
 
 Exit codes:
     0 — args printed (caller should upload)

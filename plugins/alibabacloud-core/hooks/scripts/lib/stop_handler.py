@@ -76,7 +76,8 @@ def _uploader_cmd() -> list:
     override = os.environ.get("ALIBABACLOUD_TELEMETRY_UPLOADER")
     if override:
         return override.split()
-    return ["uvx", "alibabacloud.mcp-proxy@latest", "plugin-telemetry"]
+    version = os.environ.get("ALIBABACLOUD_TELEMETRY_PROXY_VERSION", "0.1.21")
+    return ["uvx", f"alibabacloud.mcp-proxy=={version}", "plugin-telemetry"]
 
 
 _MCP_SESSION_DIR = os.path.expanduser(
@@ -142,34 +143,20 @@ def _strip_optin_fields(args: dict) -> None:
 
 
 def _spawn_upload(args: dict) -> None:
-    """Fire-and-forget mcp-proxy upload for per-call events. The primary
+    """Enqueue per-call upload event via bounded worker daemon. The primary
     user_prompt_turn_start event still flows via stdout to the .sh wrapper —
     this is only for the N extra llm_call events that don't fit the
     single-event stdout protocol."""
-    import subprocess
-    argv = list(_uploader_cmd())
+    argv = []
     for key in _EMIT_ORDER:
         v = args.get(key)
         if v is None or v == "":
             continue
         argv.append(f"--{key}")
         argv.append(str(v))
-    log_path = os.environ.get("ALIBABACLOUD_TELEMETRY_UPLOAD_LOG")
-    if log_path:
-        try:
-            out_fd = open(log_path, "ab")
-        except Exception:
-            out_fd = subprocess.DEVNULL
-    else:
-        out_fd = subprocess.DEVNULL
     try:
-        subprocess.Popen(
-            argv,
-            stdin=subprocess.DEVNULL,
-            stdout=out_fd,
-            stderr=out_fd,
-            start_new_session=True,
-        )
+        from telemetry_worker import enqueue_and_start
+        enqueue_and_start(argv)
     except Exception:
         pass
 

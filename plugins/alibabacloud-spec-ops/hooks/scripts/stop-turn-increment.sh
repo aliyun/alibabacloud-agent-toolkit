@@ -132,7 +132,7 @@ done
 # Dry-run mode: log instead of upload
 if [ "${ALIBABACLOUD_TELEMETRY_DRY_RUN}" = "1" ]; then
     {
-        printf 'DRYRUN: uvx alibabacloud.mcp-proxy@latest plugin-telemetry'
+        printf 'DRYRUN: telemetry-enqueue plugin-telemetry'
         for a in "${args[@]}"; do
             printf ' %q' "$a"
         done
@@ -142,31 +142,11 @@ if [ "${ALIBABACLOUD_TELEMETRY_DRY_RUN}" = "1" ]; then
     exit 0
 fi
 
-# Fire-and-forget: detach so the agent loop never waits on uvx.
+# Enqueue upload via bounded worker daemon — replaces fire-and-forget uvx.
 debug_log "$cdir" "[stop] decision=upload event=$(extract_arg --event-type "${args[@]}")"
 
-if [ "${ALIBABACLOUD_TELEMETRY_DEBUG}" = "1" ]; then
-    # Debug mode: capture uvx output for diagnosis instead of discarding
-    {
-        printf '[%s] [stop] upload-start cmd=uvx alibabacloud.mcp-proxy@latest plugin-telemetry' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        for a in "${args[@]}"; do printf ' %q' "$a"; done
-        printf '\n'
-    } >> "$cdir/debug.log" 2>/dev/null
-    (
-        uvx_out=$(uvx alibabacloud.mcp-proxy@latest plugin-telemetry "${args[@]}" </dev/null 2>&1)
-        uvx_rc=$?
-        {
-            printf '[%s] [stop] upload-done rc=%d\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$uvx_rc"
-            if [ -n "$uvx_out" ]; then
-                printf '[%s] [stop] upload-output: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$uvx_out"
-            fi
-        } >> "$cdir/debug.log" 2>/dev/null
-    ) &
-    disown 2>/dev/null
-else
-    ( uvx alibabacloud.mcp-proxy@latest plugin-telemetry "${args[@]}" \
-        </dev/null >/dev/null 2>&1 & ) >/dev/null 2>&1
-    disown 2>/dev/null
-fi
+# shellcheck source=telemetry_enqueue.sh
+source "$scriptDir/telemetry_enqueue.sh"
+telemetry_enqueue "${args[@]}"
 
 exit 0

@@ -1,11 +1,12 @@
 #!/bin/bash
 # UserPromptSubmit hook wrapper. Detects slash-style skill invocations
 # (`/alibabacloud-*:<skill> ...`) submitted directly to Claude Code as
-# prompts. Delegates classification to lib/prompt_handler.py, then fires
-# `uvx alibabacloud.mcp-proxy@latest plugin-telemetry` in the background.
+# prompts. Delegates classification to lib/prompt_handler.py, then enqueues
+# upload via the bounded telemetry worker daemon.
 # Always returns success to the agent.
 set +e
 umask 077
+
 
 return_success() {
     echo '{"continue":true}'
@@ -85,6 +86,15 @@ payload=$(head -c 65536)
 client=$(detect_client_bash "$payload")
 cdir=$(state_dir_for_client "$client")
 
+# Dump raw payload to debug.log for diagnosis
+if [ "${ALIBABACLOUD_TELEMETRY_DEBUG}" = "1" ]; then
+    {
+        printf '[%s] [prompt] raw-payload (%d bytes):\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${#payload}"
+        printf '%s\n' "$payload" | head -c 4096
+        printf '\n---end-payload---\n'
+    } >> "$cdir/debug.log" 2>/dev/null
+fi
+
 # Optional raw-payload trace: dump full stdin to a file so future bugs
 # can be diagnosed without guessing at the payload shape.
 if [ "${ALIBABACLOUD_TELEMETRY_TRACE_PAYLOAD}" = "1" ]; then
@@ -140,7 +150,7 @@ done
 # Dry-run mode: log instead of upload
 if [ "${ALIBABACLOUD_TELEMETRY_DRY_RUN}" = "1" ]; then
     {
-        printf 'DRYRUN: uvx alibabacloud.mcp-proxy@latest plugin-telemetry'
+        printf 'DRYRUN: telemetry-enqueue plugin-telemetry'
         for a in "${args[@]}"; do
             printf ' %q' "$a"
         done
@@ -150,10 +160,11 @@ if [ "${ALIBABACLOUD_TELEMETRY_DRY_RUN}" = "1" ]; then
     return_success
 fi
 
-# Fire-and-forget: detach so the agent loop never waits on uvx.
+# Enqueue upload via bounded worker daemon — replaces fire-and-forget uvx.
 debug_log "$cdir" "decision=upload skill=$(extract_arg --skill-name "${args[@]}")"
-( uvx alibabacloud.mcp-proxy@latest plugin-telemetry "${args[@]}" \
-    </dev/null >/dev/null 2>&1 & ) >/dev/null 2>&1
-disown 2>/dev/null
+
+# shellcheck source=telemetry_enqueue.sh
+source "$scriptDir/telemetry_enqueue.sh"
+telemetry_enqueue "${args[@]}"
 
 return_success

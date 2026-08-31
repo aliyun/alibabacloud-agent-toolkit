@@ -8,6 +8,7 @@
 set +e
 umask 077
 
+
 if [ "${ALIBABACLOUD_TELEMETRY}" = "false" ]; then
     exit 0
 fi
@@ -74,6 +75,15 @@ payload=$(head -c 65536)
 client=$(detect_client_bash "$payload")
 cdir=$(state_dir_for_client "$client")
 
+# Dump raw payload to debug.log for diagnosis
+if [ "${ALIBABACLOUD_TELEMETRY_DEBUG}" = "1" ]; then
+    {
+        printf '[%s] [stop] raw-payload (%d bytes):\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${#payload}"
+        printf '%s\n' "$payload" | head -c 4096
+        printf '\n---end-payload---\n'
+    } >> "$cdir/debug.log" 2>/dev/null
+fi
+
 if [ "${ALIBABACLOUD_TELEMETRY_TRACE_PAYLOAD}" = "1" ]; then
     payloadDir="$cdir/raw-payloads"
     mkdir -p "$payloadDir" 2>/dev/null && chmod 700 "$payloadDir" 2>/dev/null
@@ -122,7 +132,7 @@ done
 # Dry-run mode: log instead of upload
 if [ "${ALIBABACLOUD_TELEMETRY_DRY_RUN}" = "1" ]; then
     {
-        printf 'DRYRUN: uvx alibabacloud.mcp-proxy@latest plugin-telemetry'
+        printf 'DRYRUN: telemetry-enqueue plugin-telemetry'
         for a in "${args[@]}"; do
             printf ' %q' "$a"
         done
@@ -132,10 +142,11 @@ if [ "${ALIBABACLOUD_TELEMETRY_DRY_RUN}" = "1" ]; then
     exit 0
 fi
 
-# Fire-and-forget: detach so the agent loop never waits on uvx.
+# Enqueue upload via bounded worker daemon — replaces fire-and-forget uvx.
 debug_log "$cdir" "[stop] decision=upload event=$(extract_arg --event-type "${args[@]}")"
-( uvx alibabacloud.mcp-proxy@latest plugin-telemetry "${args[@]}" \
-    </dev/null >/dev/null 2>&1 & ) >/dev/null 2>&1
-disown 2>/dev/null
+
+# shellcheck source=telemetry_enqueue.sh
+source "$scriptDir/telemetry_enqueue.sh"
+telemetry_enqueue "${args[@]}"
 
 exit 0

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Post-tool-use hook wrapper. Delegates classification + status detection to
-# lib/post_handler.py, then fires `uvx alibabacloud.mcp-proxy@latest
-# plugin-telemetry` in the background. Always returns success to the agent.
+# lib/post_handler.py, then enqueues upload via the bounded telemetry worker
+# daemon. Always returns success to the agent.
 set +e
 umask 077
 
@@ -147,7 +147,7 @@ done
 # Dry-run mode: log instead of upload
 if [ "${ALIBABACLOUD_TELEMETRY_DRY_RUN}" = "1" ]; then
     {
-        printf 'DRYRUN: uvx alibabacloud.mcp-proxy@latest plugin-telemetry'
+        printf 'DRYRUN: telemetry-enqueue plugin-telemetry'
         for a in "${args[@]}"; do
             printf ' %q' "$a"
         done
@@ -157,31 +157,11 @@ if [ "${ALIBABACLOUD_TELEMETRY_DRY_RUN}" = "1" ]; then
     return_success
 fi
 
-# Fire-and-forget: detach so the agent loop never waits on uvx.
+# Enqueue upload via bounded worker daemon — replaces fire-and-forget uvx.
 debug_log "$cdir" "decision=upload event=$(extract_arg --event-type "${args[@]}") tool=$(extract_arg --tool-name "${args[@]}")"
 
-if [ "${ALIBABACLOUD_TELEMETRY_DEBUG}" = "1" ]; then
-    # Debug mode: capture uvx output for diagnosis instead of discarding
-    {
-        printf '[%s] [post-tool] upload-start cmd=uvx alibabacloud.mcp-proxy@latest plugin-telemetry' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        for a in "${args[@]}"; do printf ' %q' "$a"; done
-        printf '\n'
-    } >> "$cdir/debug.log" 2>/dev/null
-    (
-        uvx_out=$(uvx alibabacloud.mcp-proxy@latest plugin-telemetry "${args[@]}" </dev/null 2>&1)
-        uvx_rc=$?
-        {
-            printf '[%s] [post-tool] upload-done rc=%d\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$uvx_rc"
-            if [ -n "$uvx_out" ]; then
-                printf '[%s] [post-tool] upload-output: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$uvx_out"
-            fi
-        } >> "$cdir/debug.log" 2>/dev/null
-    ) &
-    disown 2>/dev/null
-else
-    ( uvx alibabacloud.mcp-proxy@latest plugin-telemetry "${args[@]}" \
-        </dev/null >/dev/null 2>&1 & ) >/dev/null 2>&1
-    disown 2>/dev/null
-fi
+# shellcheck source=telemetry_enqueue.sh
+source "$scriptDir/telemetry_enqueue.sh"
+telemetry_enqueue "${args[@]}"
 
 return_success
