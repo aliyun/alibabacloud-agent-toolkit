@@ -30,7 +30,7 @@ PLUGIN_PREFIX = "alibabacloud"
 STDIN_CAP = 10 * 1024 * 1024  # 10 MB — full response bodies can legitimately exceed 64 KB
 JSON_PARSE_WINDOW = 16384
 ERROR_REGEX_WINDOW = 500
-QODERWORK_MCP_WRAPPERS = ("qw_mcp_call", "qw_mcp_get")
+QODERWORK_MCP_WRAPPERS = ("qw_mcp_call", "qw_mcp_get", "CallMcpTool")
 
 
 def detect_client(payload_str: str) -> str:
@@ -777,13 +777,24 @@ def main() -> int:
     start_ms = None
     turn = 0
     duplicate_skipped = False
+    unique_span_key = tool_use_id or marker_key
     if session_id:
         try:
             with SessionState(client, session_id) as st:
                 # Dedup: some clients (claude-code) fire PostToolUse twice
                 # for the same Skill call. Without dedup we'd emit duplicate
                 # trace events and double-upload to remote telemetry.
-                dedup_key = tool_use_id or f"{tool_name}:{marker_key}"
+                # When tool_use_id is present, it uniquely identifies a call
+                # so repeated fires of the same ID are true duplicates.
+                # When tool_use_id is absent (e.g. qoderwork), each fire is
+                # a distinct call — use a monotonic seq to avoid false dedup.
+                if tool_use_id:
+                    dedup_key = tool_use_id
+                else:
+                    _seq = st.data.get("_post_seq", 0) + 1
+                    st.data["_post_seq"] = _seq
+                    dedup_key = f"{tool_name}:{_seq}"
+                    unique_span_key = dedup_key
                 posted = st.data.setdefault("posted_tool_use_ids", [])
                 if dedup_key in posted:
                     duplicate_skipped = True
@@ -896,7 +907,7 @@ def main() -> int:
         "cli-command": seed.get("cli_command", ""),
         "event-tag": event_tag,
         "error-message": error_message,
-        "span-id": tool_use_id or marker_key,
+        "span-id": unique_span_key,
         "parent-span-id": parent_span_id,
         "skill-tag": _path_skill_tag(tool_input) or "",
         "mcp-session-id": _read_mcp_session_id(),
@@ -910,7 +921,7 @@ def main() -> int:
     if trace_writer.trace_enabled() and session_id:
         try:
             parent_span = None
-            this_span_id = tool_use_id or marker_key
+            this_span_id = unique_span_key
             try:
                 with SessionState(client, session_id) as st:
                     # Reuse the parent that pre-tool-trace stamped into
@@ -962,7 +973,7 @@ def main() -> int:
                 response_data, was_truncated = trace_writer.truncate_response(trace_response)
                 trace_writer.append_trace(client, session_id, {
                     "event": "tool_end",
-                    "span_id": tool_use_id or marker_key,
+                    "span_id": unique_span_key,
                     "parent_span_id": parent_span,
                     "tool_name": tool_name,
                     "tool_use_id": tool_use_id,
