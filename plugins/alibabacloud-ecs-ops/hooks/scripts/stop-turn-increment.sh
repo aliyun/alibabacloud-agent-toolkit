@@ -3,10 +3,11 @@
 # Turn number is consumed by post-tool-trace.sh to tag --turn on each event.
 # Also bound to StopFailure for symmetry; both paths log identically.
 # When the turn involved alibabacloud tools, stop_handler.py emits a
-# user_prompt_turn_start event to stdout which we upload to remote telemetry.
+# user_prompt_turn_start event to stdout which we queue for bounded upload.
 # Delegates to lib/stop_handler.py which uses fcntl-locked per-session state.
 set +e
 umask 077
+
 
 if [ "${ALIBABACLOUD_TELEMETRY}" = "false" ]; then
     exit 0
@@ -74,6 +75,15 @@ payload=$(head -c 65536)
 client=$(detect_client_bash "$payload")
 cdir=$(state_dir_for_client "$client")
 
+# Dump raw payload to debug.log for diagnosis
+if [ "${ALIBABACLOUD_TELEMETRY_DEBUG}" = "1" ]; then
+    {
+        printf '[%s] [stop] raw-payload (%d bytes):\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${#payload}"
+        printf '%s\n' "$payload" | head -c 4096
+        printf '\n---end-payload---\n'
+    } >> "$cdir/debug.log" 2>/dev/null
+fi
+
 if [ "${ALIBABACLOUD_TELEMETRY_TRACE_PAYLOAD}" = "1" ]; then
     payloadDir="$cdir/raw-payloads"
     mkdir -p "$payloadDir" 2>/dev/null && chmod 700 "$payloadDir" 2>/dev/null
@@ -122,7 +132,7 @@ done
 # Dry-run mode: log instead of upload
 if [ "${ALIBABACLOUD_TELEMETRY_DRY_RUN}" = "1" ]; then
     {
-        printf 'DRYRUN: uvx alibabacloud.mcp-proxy@latest plugin-telemetry'
+        printf 'DRYRUN: queue telemetry event'
         for a in "${args[@]}"; do
             printf ' %q' "$a"
         done
@@ -132,10 +142,20 @@ if [ "${ALIBABACLOUD_TELEMETRY_DRY_RUN}" = "1" ]; then
     exit 0
 fi
 
-# Fire-and-forget: detach so the agent loop never waits on uvx.
+# Queue-based upload: write event args to a JSON queue file and start
+# the bounded worker. Replaces the old fire-and-forget
+# `uvx alibabacloud.mcp-proxy@latest` pattern that spawned one
+# unbounded process per event, causing orphan process accumulation.
 debug_log "$cdir" "[stop] decision=upload event=$(extract_arg --event-type "${args[@]}")"
-( uvx alibabacloud.mcp-proxy@latest plugin-telemetry "${args[@]}" \
-    </dev/null >/dev/null 2>&1 & ) >/dev/null 2>&1
-disown 2>/dev/null
+
+if [ "${ALIBABACLOUD_TELEMETRY_DEBUG}" = "1" ]; then
+    {
+        printf '[%s] [stop] enqueue event=%s\n' \
+            "$(date -u +%Y%m%dT%H%M%SZ)" \
+            "$(extract_arg --event-type "${args[@]}")"
+    } >> "$cdir/debug.log" 2>/dev/null
+fi
+
+printf '%s\n' "${args[@]}" | python3 "$scriptDir/lib/telemetry_enqueue.py" "$cdir" 2>/dev/null
 
 exit 0

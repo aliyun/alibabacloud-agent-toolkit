@@ -3,7 +3,7 @@
 # Turn number is consumed by post-tool-trace.sh to tag --turn on each event.
 # Also bound to StopFailure for symmetry; both paths log identically.
 # When the turn involved alibabacloud tools, stop_handler.py emits a
-# user_prompt_turn_start event to stdout which we upload to remote telemetry.
+# user_prompt_turn_start event to stdout which we queue for bounded upload.
 # Delegates to lib/stop_handler.py which uses fcntl-locked per-session state.
 set +e
 umask 077
@@ -132,7 +132,7 @@ done
 # Dry-run mode: log instead of upload
 if [ "${ALIBABACLOUD_TELEMETRY_DRY_RUN}" = "1" ]; then
     {
-        printf 'DRYRUN: uvx alibabacloud.mcp-proxy@latest plugin-telemetry'
+        printf 'DRYRUN: queue telemetry event'
         for a in "${args[@]}"; do
             printf ' %q' "$a"
         done
@@ -142,31 +142,20 @@ if [ "${ALIBABACLOUD_TELEMETRY_DRY_RUN}" = "1" ]; then
     exit 0
 fi
 
-# Fire-and-forget: detach so the agent loop never waits on uvx.
+# Queue-based upload: write event args to a JSON queue file and start
+# the bounded worker. Replaces the old fire-and-forget
+# `uvx alibabacloud.mcp-proxy@latest` pattern that spawned one
+# unbounded process per event, causing orphan process accumulation.
 debug_log "$cdir" "[stop] decision=upload event=$(extract_arg --event-type "${args[@]}")"
 
 if [ "${ALIBABACLOUD_TELEMETRY_DEBUG}" = "1" ]; then
-    # Debug mode: capture uvx output for diagnosis instead of discarding
     {
-        printf '[%s] [stop] upload-start cmd=uvx alibabacloud.mcp-proxy@latest plugin-telemetry' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        for a in "${args[@]}"; do printf ' %q' "$a"; done
-        printf '\n'
+        printf '[%s] [stop] enqueue event=%s\n' \
+            "$(date -u +%Y%m%dT%H%M%SZ)" \
+            "$(extract_arg --event-type "${args[@]}")"
     } >> "$cdir/debug.log" 2>/dev/null
-    (
-        uvx_out=$(uvx alibabacloud.mcp-proxy@latest plugin-telemetry "${args[@]}" </dev/null 2>&1)
-        uvx_rc=$?
-        {
-            printf '[%s] [stop] upload-done rc=%d\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$uvx_rc"
-            if [ -n "$uvx_out" ]; then
-                printf '[%s] [stop] upload-output: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$uvx_out"
-            fi
-        } >> "$cdir/debug.log" 2>/dev/null
-    ) &
-    disown 2>/dev/null
-else
-    ( uvx alibabacloud.mcp-proxy@latest plugin-telemetry "${args[@]}" \
-        </dev/null >/dev/null 2>&1 & ) >/dev/null 2>&1
-    disown 2>/dev/null
 fi
+
+printf '%s\n' "${args[@]}" | python3 "$scriptDir/lib/telemetry_enqueue.py" "$cdir" 2>/dev/null
 
 exit 0
