@@ -34,49 +34,12 @@ The MCP server configuration is defined in `.mcp.json`. Review the safety policy
 
 | Skill | Description |
 |-------|-------------|
-| alibabacloud-ecs-instance-ops | Alibaba Cloud ECS instance lifecycle operations. Use for creating, starting, stopping,
-restarting, releasing, and querying ECS instances. Covers instance status management,
-batch operations, and instance attribute modification.
-Triggers: "ecs instance", "create instance", "start instance", "stop instance",
-"restart instance", "release instance", "query instance", "ecs ops", "ecs lifecycle". |
-| alibabacloud-ecs-diagnose | Alibaba Cloud ECS instance diagnostics and troubleshooting. Use for diagnosing instance
-connection issues, performance problems, system status checks, and health monitoring.
-Covers SSH/RDP connectivity, system events, instance health, and performance analysis.
-Triggers: "ecs diagnose", "ecs troubleshoot", "instance connection issue",
-"ssh cannot connect", "ecs performance", "instance health", "ecs monitoring",
-"system event", "instance unreachable". |
-| alibabacloud-ecs-disk-ops | Alibaba Cloud ECS disk and snapshot operations. Use for managing cloud disks (attach,
-detach, expand, create data disk), snapshots (create, restore, delete, policy), and
-disk category management. Covers system disk and data disk lifecycle.
-Triggers: "ecs disk", "cloud disk", "attach disk", "detach disk", "expand disk",
-"data disk", "snapshot", "create snapshot", "restore snapshot", "disk resize",
-"disk capacity", "auto snapshot policy". |
-| alibabacloud-ecs-security-group | Alibaba Cloud ECS security group and network management. Use for creating and managing
-security groups, configuring inbound/outbound rules, managing network interfaces, and
-troubleshooting network connectivity. Covers security group CRUD, rule management,
-ENI operations, and VPC network checks.
-Triggers: "security group", "ecs network", "firewall rule", "security group rule",
-"inbound rule", "outbound rule", "network interface", "ENI", "port access",
-"open port", "security group management". |
-| alibabacloud-ecs-scenario-ops | Alibaba Cloud ECS scenario-based operations. Use for end-to-end operational scenarios
-that combine multiple ECS operations into complete workflows: full-stack instance
-provisioning (VPC + SecurityGroup + Instance), disk expansion with OS resize, adding
-data disks with formatting, instance migration, and batch operations.
-Triggers: "create full instance", "provision ecs", "expand disk and resize partition",
-"add data disk", "format disk", "ecs migration", "batch ecs operations",
-"ecs scenario", "full stack ecs", "instance with network". |
-| alibabacloud-cli-cost-estimation | Pre-execution cost estimation for Alibaba Cloud CLI operations. Use this skill
-whenever a user asks "how much will this cost", before executing any chargeable
-operation (create / resize / renew / bandwidth change), or when planning a
-multi-step workflow whose total cost should be known up front. Covers the
---estimate-cost flag (quote without executing), --estimate-cost-context
-(usage assumptions and future-state overrides for multi-step workflows),
-reading the quote JSON correctly (pricingMode, pricingUnit, delta amounts),
-and reconciling quotes against actual bills.
-Triggers: estimate cost, cost estimation, price quote, how much will it cost,
-询价, 报价, 多少钱, 费用预估, 成本预估, 变配差价, 执行前费用,
-estimate-cost, PricingContext, 计费预览, 账单预览, price before execution,
-chargeable operation, upgrade cost, renewal cost, bandwidth cost. |
+| alibabacloud-ecs-instance-ops | Alibaba Cloud ECS instance lifecycle operations. Use for creating, starting, stopping, restarting, releasing, and querying ECS instances. Covers instance status management, batch operations, and instance attribute modification. Triggers: "ecs instance", "create instance", "start instance", "stop instance", "restart instance", "release instance", "query instance", "ecs ops", "ecs lifecycle". |
+| alibabacloud-ecs-diagnose | Alibaba Cloud ECS instance diagnostics and troubleshooting. Use for diagnosing instance connection issues, performance problems, system status checks, and health monitoring. Covers SSH/RDP connectivity, system events, instance health, and performance analysis. Triggers: "ecs diagnose", "ecs troubleshoot", "instance connection issue", "ssh cannot connect", "ecs performance", "instance health", "ecs monitoring", "system event", "instance unreachable". |
+| alibabacloud-ecs-disk-ops | Alibaba Cloud ECS disk and snapshot operations. Use for managing cloud disks (attach, detach, expand, create data disk), snapshots (create, restore, delete, policy), and disk category management. Covers system disk and data disk lifecycle. Triggers: "ecs disk", "cloud disk", "attach disk", "detach disk", "expand disk", "data disk", "snapshot", "create snapshot", "restore snapshot", "disk resize", "disk capacity", "auto snapshot policy". |
+| alibabacloud-ecs-security-group | Alibaba Cloud ECS security group and network management. Use for creating and managing security groups, configuring inbound/outbound rules, managing network interfaces, and troubleshooting network connectivity. Covers security group CRUD, rule management, ENI operations, and VPC network checks. Triggers: "security group", "ecs network", "firewall rule", "security group rule", "inbound rule", "outbound rule", "network interface", "ENI", "port access", "open port", "security group management". |
+| alibabacloud-ecs-scenario-ops | Alibaba Cloud ECS scenario-based operations. Use for end-to-end operational scenarios that combine multiple ECS operations into complete workflows: full-stack instance provisioning (VPC + SecurityGroup + Instance), disk expansion with OS resize, adding data disks with formatting, instance migration, and batch operations. Triggers: "create full instance", "provision ecs", "expand disk and resize partition", "add data disk", "format disk", "ecs migration", "batch ecs operations", "ecs scenario", "full stack ecs", "instance with network". |
+| alibabacloud-cli-cost-estimation | Pre-execution cost estimation for Alibaba Cloud CLI operations. Use this skill whenever a user asks "how much will this cost", before executing any chargeable operation (create / resize / renew / bandwidth change), or when planning a multi-step workflow whose total cost should be known up front. Covers the --estimate-cost flag (quote without executing), --estimate-cost-context (usage assumptions and future-state overrides for multi-step workflows), reading the quote JSON correctly (pricingMode, pricingUnit, delta amounts), and reconciling quotes against actual bills. Triggers: estimate cost, cost estimation, price quote, how much will it cost, 询价, 报价, 多少钱, 费用预估, 成本预估, 变配差价, 执行前费用, estimate-cost, PricingContext, 计费预览, 账单预览, price before execution, chargeable operation, upgrade cost, renewal cost, bandwidth cost. |
 
 ## Hooks
 

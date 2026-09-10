@@ -22,12 +22,15 @@ aliyun version   # must be >= 3.3.3
 ```
 
 > **Pre-check: Alibaba Cloud Credentials Required**
+>
 > ```bash
 > aliyun configure list
 > ```
+>
 > If no valid profile exists, STOP and guide user to configure credentials.
-
+>
 > **Pre-check: Aliyun CLI plugin update required**
+>
 > ```bash
 > aliyun configure set --auto-plugin-install true
 > aliyun plugin update
@@ -256,6 +259,7 @@ aliyun ecs describe-instances --biz-region-id <RegionId> \
 ## RAM Policy
 
 Combines permissions from all involved ECS operations:
+
 - VPC: `vpc:CreateVpc`, `vpc:CreateVSwitch`, `vpc:DescribeVpcs`, `vpc:DescribeVSwitches`
 - ECS: `ecs:RunInstances`, `ecs:DescribeInstances`, `ecs:CreateSecurityGroup`, `ecs:AuthorizeSecurityGroup`
 - Disk: `ecs:CreateDisk`, `ecs:AttachDisk`, `ecs:ResizeDisk`, `ecs:CreateSnapshot`
@@ -273,4 +277,5 @@ Combines permissions from all involved ECS operations:
 ## Cleanup
 
 For each scenario, reverse the creation order:
+
 1. Release/delete instances → 2. Delete disks → 3. Delete snapshots → 4. Delete security groups → 5. Delete VSwitches → 6. Delete VPCs

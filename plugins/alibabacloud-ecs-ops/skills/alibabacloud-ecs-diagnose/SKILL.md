@@ -21,12 +21,15 @@ aliyun version   # must be >= 3.3.3
 ```
 
 > **Pre-check: Alibaba Cloud Credentials Required**
+>
 > ```bash
 > aliyun configure list
 > ```
+>
 > If no valid profile exists, STOP and guide user to configure credentials.
-
+>
 > **Pre-check: Aliyun CLI plugin update required**
+>
 > ```bash
 > aliyun configure set --auto-plugin-install true
 > aliyun plugin update
@@ -128,6 +131,7 @@ aliyun ecs describe-invocations --biz-region-id <RegionId> \
 ### 5. Diagnosis Checklist
 
 When diagnosing connection issues, follow this order:
+
 1. **Instance Status** — Verify instance is in `Running` state
 2. **System Events** — Check for planned maintenance or unexpected events
 3. **Security Group** — Verify inbound rules allow SSH (port 22) or RDP (port 3389)

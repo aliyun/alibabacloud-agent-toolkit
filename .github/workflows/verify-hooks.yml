@@ -35,5 +35,5 @@ jobs:
           ALIBABACLOUD_TELEMETRY_DRY_RUN=1 \
             bash plugins/alibabacloud-core/hooks/scripts/post-tool-trace.sh \
             < tools/dev-hooks/test-fixtures/claude-code/post-skill-success.json
-          grep -q "^DRYRUN: uvx alibabacloud.mcp-proxy@latest plugin-telemetry --client-name claude-code --event-type skill_invocation" \
+          grep -q "^DRYRUN: queue telemetry event --client-name claude-code --event-type skill_invocation" \
             "$stateDir/claude-code/debug.log"

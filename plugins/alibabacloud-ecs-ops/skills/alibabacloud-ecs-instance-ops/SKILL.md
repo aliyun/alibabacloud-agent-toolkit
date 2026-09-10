@@ -23,6 +23,7 @@ aliyun version   # must be >= 3.3.3; if not installed:
 > **Pre-check: Alibaba Cloud Credentials Required**
 >
 > **Security Rules:**
+>
 > - **NEVER** read, echo, or print AK/SK values
 > - **NEVER** ask the user to input AK/SK directly
 > - **NEVER** use `aliyun configure set` with literal credential values
@@ -31,9 +32,11 @@ aliyun version   # must be >= 3.3.3; if not installed:
 > ```bash
 > aliyun configure list
 > ```
+>
 > If no valid profile exists, STOP and guide user to configure credentials.
-
+>
 > **Pre-check: Aliyun CLI plugin update required**
+>
 > ```bash
 > aliyun configure set --auto-plugin-install true
 > aliyun plugin update
@@ -174,6 +177,7 @@ aliyun ecs modify-instance-spec --instance-id <InstanceId> \
 | `ecs:ModifyInstanceSpec` | `acs:ecs:*:*:instance/<InstanceId>` |
 
 > **[MUST] Permission Failure Handling:** When any command or API call fails due to permission errors at any point during execution, follow this process:
+>
 > 1. Read `references/ram-policies.md` to get the full list of permissions required by this SKILL
 > 2. Use `ram-permission-diagnose` skill to guide the user through requesting the necessary permissions
 > 3. Pause and wait until the user confirms that the required permissions have been granted

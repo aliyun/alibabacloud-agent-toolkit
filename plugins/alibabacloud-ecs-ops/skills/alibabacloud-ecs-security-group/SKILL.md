@@ -22,12 +22,15 @@ aliyun version   # must be >= 3.3.3
 ```
 
 > **Pre-check: Alibaba Cloud Credentials Required**
+>
 > ```bash
-aliyun configure list
-```
+> aliyun configure list
+> ```
+>
 > If no valid profile exists, STOP and guide user to configure credentials.
-
+>
 > **Pre-check: Aliyun CLI plugin update required**
+>
 > ```bash
 > aliyun configure set --auto-plugin-install true
 > aliyun plugin update
