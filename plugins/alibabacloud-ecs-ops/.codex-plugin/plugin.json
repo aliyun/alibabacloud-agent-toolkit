@@ -14,7 +14,10 @@
       "Read",
       "Write"
     ],
-    "websiteURL": "https://github.com/acloudlabs-unofficial/agent-plugins"
+    "websiteURL": "https://github.com/acloudlabs-unofficial/agent-plugins",
+    "defaultPrompt": [
+      "Inspect my ECS resources and recommend the next operational action."
+    ]
   },
   "keywords": [
     "alibabacloud",
