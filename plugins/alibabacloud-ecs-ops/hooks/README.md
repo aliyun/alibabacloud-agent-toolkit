@@ -19,39 +19,50 @@
 
 Anonymized usage telemetry shared by all `alibabacloud-*` plugins in this
 repository. Captures per-call hook events from agent clients (Claude Code,
-Codex CLI, QoderWork; VS Code / Copilot CLI remain Phase 2 stubs), queues
-each event as a file on disk, and lets one bounded background worker upload
-them with the pinned `alibabacloud.mcp-proxy==0.5.1 plugin-telemetry` CLI.
+Codex CLI, and the Qoder family; VS Code / Copilot CLI remain Phase 2 stubs),
+queues each event as a file on disk, and lets one bounded background worker
+upload them with the pinned `alibabacloud.mcp-proxy==0.5.1 plugin-telemetry`
+CLI.
 
 Per-client event coverage:
 
-| Client      | Config file                | Events subscribed                                                                 |
-| ----------- | -------------------------- | --------------------------------------------------------------------------------- |
-| Claude Code | `hooks.json`               | `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop`, `StopFailure`, `UserPromptSubmit` (6) |
-| Codex CLI   | `codex-hooks.json`         | `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop` (4)                       |
-| QoderWork   | `qoderwork-hooks.json`     | `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop` (4 — same as Codex)       |
+| Client       | Config file                | Events subscribed                                                                 |
+| ------------ | -------------------------- | --------------------------------------------------------------------------------- |
+| Claude Code  | `hooks.json`               | `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop`, `StopFailure`, `UserPromptSubmit` (6) |
+| Codex CLI    | `codex-hooks.json`         | `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop` (4)                       |
+| Qoder family | `qoderwork-hooks.json`     | `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop` (4 — same as Codex)       |
 
-QoderWork and Codex share the same 4-event minimal set; this yields the
+The Qoder family and Codex share the same 4-event minimal set; this yields the
 same per-tool-call, per-prompt, per-turn granularity as Claude Code's
 6-event set (Claude's extra two events — `PostToolUseFailure` and
-`StopFailure` — are merged into the success-path scripts on QoderWork /
+`StopFailure` — are merged into the success-path scripts on Qoder /
 Codex). `UserPromptSubmit` catches direct slash-style skill invocations
 (e.g. `/alibabacloud-core:foo args...`) that some clients submit as plain
 prompts instead of firing the `Skill` tool.
 
-## QoderWork install
+One config file does not mean one client name: QoderWork, qodercli, qoderIDE
+and QwenWork all install `qoderwork-hooks.json` but each reports its own
+`client`, resolved from the environment. See [Client detection](#client-detection).
 
-QoderWork does **not** inject environment variables into hook scripts and
-has only a user-scope settings file (no project scope). Hook registration
-is handled automatically by `npx openplugin`.
+## Qoder family install
 
-It bakes the absolute plugin path into `~/.qoderwork/settings.json` (the
+Qoder-family hosts have only a user-scope settings file (no project scope);
+for QoderWork that is `~/.qoderwork/settings.json`. Hook registration is
+handled automatically by `npx openplugin`.
+
+It bakes the absolute plugin path into that settings file (the
 `__PLUGIN_ROOT__` placeholder in `qoderwork-hooks.json` is substituted at
 install time), prefixes each command with `QODER_WORK=1` so the same hook
 scripts classify the client correctly, and is fully idempotent — re-running
 removes any prior `alibabacloud-core/*` entries before appending fresh
 ones, leaving user-defined and other-plugin hooks untouched. A timestamped
 backup is written next to the settings file on every run.
+
+`QODER_WORK=1` only says "some Qoder-family host". Hosts that know their own
+product additionally inject `QODER_WORK_INTEGRATION_MODE`,
+`QODER_WORK_INTEGRATION_PRODUCT`, `QODER_AGENT`, `QODER_HOOK_SOURCE` and
+`QODER_IDE`, which the hook scripts use to report the concrete client instead
+of the generic `qoderwork`. See [Client detection](#client-detection).
 
 ## Prerequisites
 
@@ -122,7 +133,7 @@ the pinned uploader, so the agent never waits:
 
 ```
 <state-dir>/<client>/.venv/bin/plugin-telemetry \
-    --client-name <claude-code|codex|qoderwork|vscode> \
+    --client-name <claude-code|codex|vscode|copilot-cli|qoderwork|qwenworkcn|qoder_cli_0|…> \
     --event-type <skill_invocation|subagent_dispatch|reference_file_read|cli_command_use|mcp_tool_use> \
     --start-timestamp <ISO8601> \
     --end-timestamp <ISO8601> \
@@ -159,12 +170,23 @@ export ALIBABACLOUD_TELEMETRY=false
 | `ALIBABACLOUD_TELEMETRY_WORKER_STATE_DIR` | unset                                            | Client directory the worker drains. Set automatically by `telemetry_enqueue.py`; not meant to be exported by hand                |
 | `COPILOT_CLI`                       | unset                                                  | Set to `1` to declare the Copilot CLI client (Phase 2 stub)                                                                     |
 | `CODEX_CLI`                         | unset                                                  | Set to `1` to declare the Codex client (Phase 2 stub)                                                                           |
-| `QODER_WORK`                        | unset                                                  | Set to `1` to declare the QoderWork client. The `openplugin` installer prefixes each registered hook command with this var. |
+| `QODER_WORK`                        | unset                                                  | Set to `1` to declare a Qoder-family client. The `openplugin` installer prefixes each registered hook command with this var. Yields `qoderwork` unless one of the vars below narrows it down. |
+| `QODER_WORK_INTEGRATION_MODE`       | unset                                                  | Set to `1` by Qoder-family hosts running in integration mode. On its own it still resolves to `qoderwork`. |
+| `QODER_WORK_INTEGRATION_PRODUCT`    | unset                                                  | Highest-priority Qoder-family marker: when non-empty its value becomes the client name verbatim (sanitized), e.g. `qwenworkcn`. |
+| `QODER_AGENT`                       | unset                                                  | Set to `true` by qodercli / qoderIDE. Combined with the two vars below it resolves to `qoder_<QODER_HOOK_SOURCE>_<QODER_IDE>`. |
+| `QODER_HOOK_SOURCE`                 | unset                                                  | Hook origin reported by a `QODER_AGENT=true` host, e.g. `cli`. Required together with `QODER_IDE`; if either is missing the client falls back to `qoderwork`. |
+| `QODER_IDE`                         | unset                                                  | IDE/workspace discriminator reported by a `QODER_AGENT=true` host, e.g. `0`. Required together with `QODER_HOOK_SOURCE`. |
 
 ## Architecture
 
-`tools/hooks/` is the canonical source. Each plugin under `plugins/` has a
-`hooks/` symlink pointing here, so editing one set of scripts is enough.
+`plugins/alibabacloud-core/hooks/` is the canonical source and a real
+directory. `plugins/alibabacloud-spec-ops/hooks/` and
+`plugins/alibabacloud-ecs-ops/hooks/` are byte-identical copies of it, not
+symlinks — the marketplace did not preserve cross-directory links, so end
+users used to receive an empty `hooks/`. Edit the canonical copy, then mirror
+it into the other two plugins and run
+`bash tools/dev-hooks/verify-hooks.sh`, which fails on any symlink or
+divergent copy.
 
 ### Hook lifecycle
 
@@ -351,7 +373,8 @@ multi-client operation:
 │       ├── post-<ts>-<pid>.json
 │       └── stop-<ts>-<pid>.json
 ├── codex/                             # (Phase 2 stub)
-└── qoderwork/                         # (Phase 2 stub)
+├── qoderwork/                         # Qoder-family default
+└── qwenworkcn/                        # one dir per resolved Qoder client
 ```
 
 ### Local audit trace (`traces/`)
@@ -388,7 +411,7 @@ Light sanitization is applied (AK/SK, STS tokens, JWT, PEM keys,
 | `start_timestamp` | `string` | ISO 8601 with milliseconds, e.g. `2026-05-20T01:48:59.649Z`             |
 | `end_timestamp`   | `string` | ISO 8601 with milliseconds                                               |
 | `session_id`      | `string` | Claude Code session UUID                                                  |
-| `client`          | `string` | Enum: `claude-code`, `vscode`, `copilot-cli`, `codex`, `qoderwork`       |
+| `client`          | `string` | Resolved client name: `claude-code`, `vscode`, `copilot-cli`, `codex`, or the concrete Qoder-family name (`qoderwork`, `qwenworkcn`, `qoder_cli_0`, …). See [Client detection](#client-detection). |
 
 **`prompt` event** (backfilled at Stop):
 
@@ -531,13 +554,37 @@ The client identity is determined in priority order:
 
 1. `COPILOT_CLI=1` env var → `copilot-cli`
 2. `CODEX_CLI=1` env var → `codex`
-3. `QODER_WORK=1` env var → `qoderwork`
+3. Qoder-family env var present → the concrete Qoder client (resolved below)
 4. Hook payload contains the literal substring `__vscode` → `vscode`
-5. Default → `claude-code`
+5. Hook payload contains the literal substring `"turn_id":` → `codex`
+6. Default → `claude-code`
 
-The same logic appears in the bash wrappers (for picking
-`<client>/debug.log` path) and in `lib/post_handler.py` (for the
-`--client-name` flag value), so both stay in sync.
+Every Qoder-family host (qodercli, qoderIDE, QoderWork, QwenWork, …) installs
+the same `qoderwork-hooks.json`, so step 3 resolves the concrete product from
+the environment the host injects:
+
+1. `QODER_WORK_INTEGRATION_PRODUCT` non-empty → that value, e.g. `qwenworkcn`
+   for 千问办公中国版
+2. else `QODER_AGENT=true` with both `QODER_HOOK_SOURCE` and `QODER_IDE`
+   non-empty → `qoder_<QODER_HOOK_SOURCE>_<QODER_IDE>`, e.g. `qoder_cli_0`
+3. else → `qoderwork`, the legacy default that `QODER_WORK=1` alone yields
+
+Step 3 is only entered when at least one of `QODER_WORK=1`,
+`QODER_WORK_INTEGRATION_MODE=1` or `QODER_AGENT=true` is set, so a plain Claude
+Code session still falls through to `claude-code`.
+
+The resolved name doubles as the `<state-dir>/<client>/` directory name, so it
+is sanitized with `[^A-Za-z0-9_-]` → `_` and capped at 64. Sanitization is
+byte-wise (UTF-8) on both sides — bash uses `tr -c`, python encodes before
+`re.sub` — so a non-ASCII product name maps to the identical directory instead
+of splitting one client's state across two buckets.
+
+The same logic appears in the bash wrappers (for picking the
+`<state-dir>/<client>/` path) and in each `lib/*_handler.py` (for the
+`--client-name` flag value and the `client` field on trace records), so both
+stay in sync. `tools/dev-hooks/test-client-detection.sh` asserts the two
+implementations agree, and that `lib/token_recorder.py` still parses the whole
+family's Claude-shaped transcripts.
 
 ## Diagnostics
 
