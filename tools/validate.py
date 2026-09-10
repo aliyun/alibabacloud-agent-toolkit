@@ -12,11 +12,14 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import struct
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 KEBAB_RE = re.compile(r"^[a-z][a-z0-9]+(-[a-z0-9]+)*$")
+ICON_EXTENSIONS = {".svg", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".ico"}
 
 errors: list[str] = []
 
@@ -113,6 +116,168 @@ def validate_marketplace(path: Path, label: str) -> None:
                 error(f"Plugin source '{source}' does not exist for '{plugin['name']}'")
 
 
+def _svg_dimension(value: str | None) -> float | None:
+    if value is None:
+        return None
+    match = re.fullmatch(r"\s*([0-9]+(?:\.[0-9]+)?)\s*(?:px)?\s*", value)
+    return float(match.group(1)) if match else None
+
+
+def _svg_size(data: bytes) -> tuple[float, float]:
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError as exc:
+        raise ValueError("invalid SVG XML") from exc
+    if root.tag.rsplit("}", 1)[-1] != "svg":
+        raise ValueError("missing SVG root element")
+
+    view_box = root.get("viewBox")
+    if view_box:
+        parts = view_box.replace(",", " ").split()
+        if len(parts) != 4:
+            raise ValueError("invalid SVG viewBox")
+        try:
+            width, height = float(parts[2]), float(parts[3])
+        except ValueError as exc:
+            raise ValueError("invalid SVG viewBox") from exc
+        if width <= 0 or height <= 0:
+            raise ValueError("invalid SVG viewBox")
+        return width, height
+
+    width = _svg_dimension(root.get("width"))
+    height = _svg_dimension(root.get("height"))
+    if width is None or height is None or width <= 0 or height <= 0:
+        raise ValueError("SVG requires a viewBox or numeric width and height")
+    return width, height
+
+
+def _jpeg_size(data: bytes) -> tuple[int, int]:
+    if not data.startswith(b"\xff\xd8"):
+        raise ValueError("missing JPEG signature")
+    position = 2
+    sof_markers = {
+        0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+        0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF,
+    }
+    while position + 4 <= len(data):
+        if data[position] != 0xFF:
+            position += 1
+            continue
+        while position < len(data) and data[position] == 0xFF:
+            position += 1
+        if position >= len(data):
+            break
+        marker = data[position]
+        position += 1
+        if marker in (0xD8, 0xD9) or 0xD0 <= marker <= 0xD7:
+            continue
+        if position + 2 > len(data):
+            break
+        segment_length = struct.unpack_from(">H", data, position)[0]
+        if segment_length < 2 or position + segment_length > len(data):
+            break
+        if marker in sof_markers and segment_length >= 7:
+            height, width = struct.unpack_from(">HH", data, position + 3)
+            return width, height
+        position += segment_length
+    raise ValueError("missing JPEG dimensions")
+
+
+def _webp_size(data: bytes) -> tuple[int, int]:
+    if len(data) < 20 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
+        raise ValueError("missing WebP signature")
+    chunk = data[12:16]
+    if chunk == b"VP8X" and len(data) >= 30:
+        width = int.from_bytes(data[24:27], "little") + 1
+        height = int.from_bytes(data[27:30], "little") + 1
+        return width, height
+    if chunk == b"VP8 " and len(data) >= 30 and data[23:26] == b"\x9d\x01\x2a":
+        width = int.from_bytes(data[26:28], "little") & 0x3FFF
+        height = int.from_bytes(data[28:30], "little") & 0x3FFF
+        return width, height
+    if chunk == b"VP8L" and len(data) >= 25 and data[20] == 0x2F:
+        bits = int.from_bytes(data[21:25], "little")
+        return (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
+    raise ValueError("unsupported WebP header")
+
+
+def _raster_size(extension: str, data: bytes) -> tuple[int, int]:
+    if extension == ".png":
+        if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+            raise ValueError("missing PNG signature or IHDR")
+        return struct.unpack_from(">II", data, 16)
+    if extension in {".jpg", ".jpeg"}:
+        return _jpeg_size(data)
+    if extension == ".webp":
+        return _webp_size(data)
+    if extension == ".gif":
+        if len(data) < 10 or data[:6] not in {b"GIF87a", b"GIF89a"}:
+            raise ValueError("missing GIF signature")
+        return struct.unpack_from("<HH", data, 6)
+    if extension == ".bmp":
+        if len(data) < 26 or data[:2] != b"BM":
+            raise ValueError("missing BMP signature")
+        width, height = struct.unpack_from("<ii", data, 18)
+        return abs(width), abs(height)
+    if extension == ".ico":
+        if len(data) < 22 or data[:4] != b"\x00\x00\x01\x00":
+            raise ValueError("missing ICO signature")
+        count = struct.unpack_from("<H", data, 4)[0]
+        if count < 1:
+            raise ValueError("ICO contains no images")
+        width = data[6] or 256
+        height = data[7] or 256
+        return width, height
+    raise ValueError("unsupported raster format")
+
+
+def validate_plugin_icon(plugin_dir: Path) -> None:
+    """Validate the convention-discovered assets/icon.* for a real plugin."""
+    assets_dir = plugin_dir / "assets"
+    candidates = sorted(assets_dir.glob("icon.*")) if assets_dir.is_dir() else []
+    unsupported = [path for path in candidates if path.suffix not in ICON_EXTENSIONS]
+    for path in unsupported:
+        error(
+            f"Unsupported plugin icon extension '{path.suffix}' in "
+            f"{path.relative_to(REPO_ROOT) if path.is_relative_to(REPO_ROOT) else path}"
+        )
+
+    supported = [
+        path for path in candidates
+        if path.suffix in ICON_EXTENSIONS and path.is_file()
+    ]
+    if not supported:
+        error(f"Missing plugin icon: {plugin_dir.name}/assets/icon.*")
+        return
+    if len(supported) > 1:
+        error(f"Multiple plugin icons found in {plugin_dir.name}/assets")
+        return
+
+    icon_path = supported[0]
+    try:
+        data = icon_path.read_bytes()
+    except OSError as exc:
+        error(f"Unable to read plugin icon {icon_path}: {exc}")
+        return
+    if not data:
+        error(f"Plugin icon is empty: {icon_path}")
+        return
+
+    try:
+        if icon_path.suffix == ".svg":
+            width, height = _svg_size(data)
+        else:
+            width, height = _raster_size(icon_path.suffix, data)
+    except ValueError as exc:
+        error(f"Plugin icon content does not match {icon_path.suffix}: {icon_path} ({exc})")
+        return
+
+    if width != height:
+        error(f"Plugin icon must be square: {icon_path} is {width}x{height}")
+    if icon_path.suffix == ".png" and (width, height) != (256, 256):
+        error(f"PNG plugin icon must be 256x256: {icon_path} is {width}x{height}")
+
+
 def validate_plugin(plugin_dir: Path) -> None:
     """Validate a single plugin's manifests and skills."""
     name = plugin_dir.name
@@ -125,6 +290,8 @@ def validate_plugin(plugin_dir: Path) -> None:
         return
 
     print(f"Validating plugin: {name}")
+
+    validate_plugin_icon(plugin_dir)
 
     # Claude Code manifest
     validate_json(claude_manifest, ["name"])
