@@ -474,7 +474,9 @@ prompt (span_id=abc, parent_span_id=null)      ← root of this turn
   2. `$HOME/.cache/alibabacloud-agent-toolkit/telemetry` (if writable)
   3. `/tmp/alibabacloud-agent-toolkit-telemetry-<uid>` (last-resort fallback)
   4. If none writable, telemetry silently no-ops
-- `<client-name>` is sanitized via `[^A-Za-z0-9_-]` → `_`, capped at 64 chars
+- `<client-name>` is sanitized via `[^A-Za-z0-9_-]` → `_`, capped at 64 **bytes**
+  (UTF-8, so `千问办公` → 12 underscores). Applied identically by the bash
+  wrappers, the python handlers and `lib/state.py:client_dir()`
 - `<safe-session>` = `re.sub(r"[^A-Za-z0-9_-]", "_", session_id)[:120]`
 
 We do **not** SHA-256 the session_id. Claude Code session IDs are UUIDv4 so
@@ -579,12 +581,15 @@ byte-wise (UTF-8) on both sides — bash uses `tr -c`, python encodes before
 `re.sub` — so a non-ASCII product name maps to the identical directory instead
 of splitting one client's state across two buckets.
 
-The same logic appears in the bash wrappers (for picking the
-`<state-dir>/<client>/` path) and in each `lib/*_handler.py` (for the
-`--client-name` flag value and the `client` field on trace records), so both
-stay in sync. `tools/dev-hooks/test-client-detection.sh` asserts the two
-implementations agree, and that `lib/token_recorder.py` still parses the whole
-family's Claude-shaped transcripts.
+The same logic appears three times: in the bash wrappers (for picking the
+`<state-dir>/<client>/` path), in each `lib/*_handler.py` (for the
+`--client-name` flag value and the `client` field on trace records), and in
+`lib/state.py:client_dir()` (which actually creates `sessions/` and `traces/`),
+so all three stay in sync. `tools/dev-hooks/test-client-detection.sh` asserts
+the implementations agree, that `client_dir()` resolves to the very bucket the
+wrapper wrote to — byte-for-byte, including for a non-ASCII product name — and
+that `lib/token_recorder.py` still parses the whole family's Claude-shaped
+transcripts.
 
 ## Diagnostics
 

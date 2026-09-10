@@ -5,11 +5,14 @@
 # qoderwork-hooks.json, so the concrete client is resolved from the environment
 # the host injects. Two independent implementations perform that resolution:
 # the bash wrappers, which pick <state-dir>/<client>/, and the python handlers,
-# which emit --client-name and the trace `client` field. When they disagree,
-# one client's events split across two state buckets and uploads silently go
-# missing — so these tests assert the two agree case by case, that the whole
-# family still gets its transcript parsed, and that a real hook fire lands in
-# the bucket both sides computed.
+# which emit --client-name and the trace `client` field. The name-sanitizing
+# rule is copied a third time into lib/state.py:client_dir(), which is what
+# actually creates sessions/ and traces/. When any two of them disagree, one
+# client's events split across two state buckets and uploads silently go
+# missing — so these tests assert the detection results agree case by case, that
+# the three copies of the sanitize rule agree byte for byte, that the whole
+# family still gets its transcript parsed, and that a real hook fire lands every
+# side's files in the one bucket both implementations computed.
 
 set -e
 
@@ -263,7 +266,56 @@ os.unlink(transcript)
 sys.exit(failed)
 PYEOF
 
-# --- 4. a real hook fire must land in the bucket both sides computed --------
+# --- 4. lib/state.py must sanitize by the same byte-wise rule ---------------
+
+echo ""
+echo "=== Test: client_dir() and sanitize_client_bash() agree byte for byte ==="
+
+# client_dir() is the third copy of the sanitize rule. It names the bucket that
+# holds sessions/ and traces/, while the wrappers name the bucket that holds
+# debug.log and the upload queue. Production hands it an already-sanitized name,
+# so a char-wise copy stays latent until something feeds it a raw non-ASCII
+# client -- which is why the rule is compared directly here instead of relying
+# on the end-to-end case below, where detection has sanitized the name already.
+pyClientDir="$workDir/py_client_dir.py"
+cat > "$pyClientDir" <<PYEOF
+import sys
+
+sys.path.insert(0, "$HOOKS_DIR/lib")
+import state
+
+print(state.client_dir(sys.argv[1]))
+PYEOF
+
+parityDir="$workDir/state-parity"
+mkdir -p "$parityDir"
+
+# check_dir_parity <description> <raw-client-name>
+check_dir_parity() {
+    local desc="$1" raw="$2"
+
+    local want got
+    want="$parityDir/$(. "$reference"; sanitize_client_bash "$raw")"
+    got="$(ALIBABACLOUD_TELEMETRY_STATE_DIR="$parityDir" python3 "$pyClientDir" "$raw")"
+
+    if [ "$got" != "$want" ]; then
+        note_fail "client_dir: $desc -> '$got', wrapper rule gives '$want'"
+        printf '    python: '; printf '%s' "${got##*/}" | od -An -tx1 | tr -d '\n'; echo
+        printf '    bash:   '; printf '%s' "${want##*/}" | od -An -tx1 | tr -d '\n'; echo
+    else
+        echo "  ok: client_dir $desc -> ${got##*/}"
+    fi
+}
+
+check_dir_parity "ascii"                 "claude-code"
+check_dir_parity "spaces and slash"      "qwen work/cn"
+check_dir_parity "non-ascii product"     "千问办公"
+check_dir_parity "mixed ascii+non-ascii" "qwen办公cn"
+# 63 ASCII bytes then a 3-byte character: the 64 cap lands inside that character.
+check_dir_parity "cap splits multibyte"  "$(printf '%063d' 0 | tr '0' 'a')千问"
+check_dir_parity "cap beyond 64 bytes"   "$(printf '%080d' 0 | tr '0' 'a')"
+
+# --- 5. a real hook fire must land in the bucket both sides computed --------
 
 echo ""
 echo "=== Test: wrapper and handler agree on the state bucket (dry run) ==="
@@ -272,6 +324,8 @@ echo "=== Test: wrapper and handler agree on the state bucket (dry run) ==="
 e2e_case() {
     local desc="$1"; shift
     local expected="$1"; shift
+    # Snapshot so the ok line reflects this case only, not the whole run.
+    local failBefore="$fail"
 
     reset_client_env
     local kv
@@ -287,6 +341,25 @@ e2e_case() {
         bash "$HOOKS_DIR/post-tool-trace.sh" \
         < "$fixturesDir/post-skill-success.json" > /dev/null 2>&1 || true
 
+    # One bucket only. A disagreement between the two implementations shows up
+    # as a second directory, and the events in it never reach the uploader.
+    local bucketCount
+    bucketCount="$(find "$e2eDir" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
+    if [ "$bucketCount" != "1" ]; then
+        note_fail "e2e $desc: expected 1 state bucket, found $bucketCount"
+        find "$e2eDir" -mindepth 1 -maxdepth 2 | sed "s|^$e2eDir|    |"
+    fi
+
+    # Compare the name the fire actually produced, not a path assembled from the
+    # expectation, so a non-ASCII client has to match byte for byte.
+    local actual
+    actual="$(find "$e2eDir" -mindepth 1 -maxdepth 1 -type d | head -1)"
+    if [ "${actual##*/}" != "$expected" ]; then
+        note_fail "e2e $desc: bucket '${actual##*/}' != '$expected'"
+        printf '    got:      '; printf '%s' "${actual##*/}" | od -An -tx1 | tr -d '\n'; echo
+        printf '    expected: '; printf '%s' "$expected" | od -An -tx1 | tr -d '\n'; echo
+    fi
+
     local log="$e2eDir/$expected/debug.log"
     if [ ! -f "$log" ]; then
         note_fail "e2e $desc: no debug.log under $e2eDir/$expected/"
@@ -294,7 +367,19 @@ e2e_case() {
     elif ! grep -q "^DRYRUN: queue telemetry event --client-name $expected --event-type skill_invocation" "$log"; then
         note_fail "e2e $desc: debug.log has no --client-name $expected event"
         cat "$log"
-    else
+    fi
+
+    # debug.log is written by the wrapper; sessions/ and traces/ are created by
+    # lib/state.py through the handlers. All three living in the same bucket is
+    # what proves the two sides resolved one identical directory.
+    local side
+    for side in sessions traces; do
+        if [ ! -d "$e2eDir/$expected/$side" ]; then
+            note_fail "e2e $desc: no $side/ next to debug.log in $expected/"
+        fi
+    done
+
+    if [ "$fail" = "$failBefore" ]; then
         echo "  ok: e2e $desc -> $expected/"
     fi
 
@@ -308,6 +393,15 @@ e2e_case "qwenworkcn product"   "qwenworkcn" \
     QODER_WORK=1 QODER_WORK_INTEGRATION_MODE=1 QODER_WORK_INTEGRATION_PRODUCT=qwenworkcn
 e2e_case "qoder agent cli"      "qoder_cli_0" \
     QODER_AGENT=true QODER_HOOK_SOURCE=cli QODER_IDE=0
+# The whole point of the byte-wise rule: 千问办公 is 4 characters but 12 UTF-8
+# bytes, so a char-wise copy would write debug.log to ____________ while the
+# handlers created sessions/ and traces/ under ____.
+e2e_case "non-ascii product"    "____________" \
+    QODER_WORK=1 QODER_WORK_INTEGRATION_PRODUCT='千问办公'
+e2e_case "mixed ascii product"  "qwen______cn" \
+    QODER_WORK=1 QODER_WORK_INTEGRATION_PRODUCT='qwen办公cn'
+e2e_case "product capped at 64" "$(printf '%064d' 0 | tr '0' 'a')" \
+    QODER_WORK=1 QODER_WORK_INTEGRATION_PRODUCT="$(printf '%080d' 0 | tr '0' 'a')"
 
 echo ""
 if [ "$fail" -ne 0 ]; then

@@ -10,7 +10,7 @@ tests.
 | `verify-hooks.sh` | Asserts canonical layout exists; no plugin re-introduces a symlink; any non-core plugin holding a `hooks/` directory must be byte-identical to canonical. |
 | `dry-run.sh [<stem> \| --all]` | Runs each fixture under `test-fixtures/claude-code/` through the canonical handlers and diffs against `test-fixtures/expected/`. |
 | `test-trace.sh` | Integration test for the local JSONL trace flow (prompt → pre → post → stop, sanitization, truncation, opt-out, slash-skill detection). |
-| `test-client-detection.sh` | Parity test for client-name resolution: the detection block must be identical across the four wrappers, bash and python must agree on the resolved client, `token_recorder` must parse the whole Qoder family, and the wrapper's state bucket must match the handler's `--client-name`. |
+| `test-client-detection.sh` | Parity test for client-name resolution: the detection block must be identical across the four wrappers, bash and python must agree on the resolved client, `lib/state.py:client_dir()` must sanitize by the same byte-wise rule as the wrappers, `token_recorder` must parse the whole Qoder family, and a real hook fire must put the wrapper's `debug.log` and the handlers' `sessions/` + `traces/` into one single bucket matching `--client-name`. |
 | `stress-test.sh` | Load test for the hook handlers. |
 
 ## How dev scripts find the canonical implementation

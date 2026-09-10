@@ -58,7 +58,11 @@ def client_dir(client: str) -> str:
     base = state_root()
     if not base:
         return ""
-    safe_client = re.sub(r"[^A-Za-z0-9_-]", "_", client or "unknown")[:64]
+    # Byte-wise, same rule as the bash wrappers' sanitize_client_bash() and the
+    # handlers' _sanitize_client(): a non-ASCII client name must map to the
+    # identical bucket, or its sessions/ and traces/ split from its debug.log.
+    raw = (client or "unknown").encode("utf-8", "replace")
+    safe_client = re.sub(rb"[^A-Za-z0-9_-]", b"_", raw)[:64].decode("ascii")
     p = os.path.join(base, safe_client)
     sessions_dir = os.path.join(p, "sessions")
     try:

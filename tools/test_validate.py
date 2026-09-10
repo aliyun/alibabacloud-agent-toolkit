@@ -159,7 +159,7 @@ class EcsManifestTests(unittest.TestCase):
             json.loads(path.read_text(encoding="utf-8"))["version"]
             for path in paths
         }
-        self.assertEqual({"0.0.6"}, versions)
+        self.assertEqual({"0.0.7"}, versions)
 
     def test_qoder_manifest_declares_hooks_and_mcp(self) -> None:
         path = repo_validate.REPO_ROOT / "plugins/alibabacloud-ecs-ops/.qoder-plugin/plugin.json"
