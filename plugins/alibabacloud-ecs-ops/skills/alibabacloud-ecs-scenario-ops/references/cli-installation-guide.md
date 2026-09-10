@@ -15,6 +15,7 @@ One command to install or update — works on both macOS and Linux, auto-detects
 ```
 
 After installation, verify:
+
 ```bash
 aliyun version   # should be >= 3.3.3
 ```
@@ -31,13 +32,15 @@ brew upgrade aliyun-cli
 
 Use these only if the setup script above is not suitable.
 
-**x86_64**
+#### x86_64
+
 ```bash
 wget --connect-timeout=10 --read-timeout=120 --tries=3 -qO- https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz | tar xz
 sudo mv aliyun /usr/local/bin/
 ```
 
-**ARM64**
+#### ARM64
+
 ```bash
 wget --connect-timeout=10 --read-timeout=120 --tries=3 -qO- https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-arm64.tgz | tar xz
 sudo mv aliyun /usr/local/bin/
@@ -45,14 +48,16 @@ sudo mv aliyun /usr/local/bin/
 
 ### Windows
 
-**Using Binary**
+#### Using Binary
+
 1. Download from: https://aliyuncli.alicdn.com/aliyun-cli-windows-latest-amd64.zip
 2. Extract the ZIP file
 3. Add the directory to your PATH environment variable
 4. Open new Command Prompt or PowerShell
 5. Verify: `aliyun version`
 
-**Using PowerShell**
+#### Using PowerShell
+
 ```powershell
 # Download
 Invoke-WebRequest -Uri "https://aliyuncli.alicdn.com/aliyun-cli-windows-latest-amd64.zip" -OutFile "aliyun-cli.zip"
@@ -92,7 +97,7 @@ aliyun configure set \
 All `aliyun configure` commands support non-interactive flags, which is the recommended approach —
 it works in scripts, CI/CD pipelines, and agent-driven automation without hanging on stdin prompts.
 
-**Where to Get Access Keys**
+#### Where to Get Access Keys
 
 1. Log in to Aliyun Console: https://ram.console.aliyun.com/
 2. Navigate to: AccessKey Management
@@ -221,14 +226,16 @@ aliyun configure set \
 
 **Highest priority** - overrides config file
 
-**Access Key Mode**
+#### Access Key Mode
+
 ```bash
 export ALIBABA_CLOUD_ACCESS_KEY_ID=<your-access-key-id>
 export ALIBABA_CLOUD_ACCESS_KEY_SECRET=<your-access-key-secret>
 export ALIBABA_CLOUD_REGION_ID=cn-hangzhou
 ```
 
-**STS Token Mode**
+#### STS Token Mode
+
 ```bash
 export ALIBABA_CLOUD_ACCESS_KEY_ID=<your-access-key-id>
 export ALIBABA_CLOUD_ACCESS_KEY_SECRET=<your-access-key-secret>
@@ -237,13 +244,14 @@ export ALIBABA_CLOUD_REGION_ID=cn-hangzhou
 ```
 
 **Use Case**:
+
 - CI/CD pipelines
 - Docker containers
 - Temporary credential override
 
 ### Managing Multiple Profiles
 
-**Create Named Profiles**
+#### Create Named Profiles
 
 ```bash
 aliyun configure set --profile projectA \
@@ -259,7 +267,7 @@ aliyun configure set --profile projectB \
   --region cn-shanghai
 ```
 
-**Use Specific Profile**
+#### Use Specific Profile
 
 ```bash
 aliyun ecs describe-instances --profile projectA
@@ -268,7 +276,7 @@ export ALIBABA_CLOUD_PROFILE=projectA
 aliyun ecs describe-instances   # Uses projectA
 ```
 
-**List and Switch Profiles**
+#### List and Switch Profiles
 
 ```bash
 aliyun configure list                      # List all profiles
@@ -297,6 +305,7 @@ aliyun ecs describe-regions
 ```
 
 **If successful**, you'll see:
+
 ```json
 {
   "Regions": {
@@ -314,6 +323,7 @@ aliyun ecs describe-regions
 ```
 
 **If failed**, you'll see error messages:
+
 - `InvalidAccessKeyId.NotFound` - Wrong Access Key ID
 - `SignatureDoesNotMatch` - Wrong Access Key Secret
 - `InvalidSecurityToken.Expired` - STS token expired (for StsToken mode)
@@ -468,6 +478,7 @@ export ALIBABA_CLOUD_READ_TIMEOUT=30
 After installation and configuration:
 
 1. **Install plugins** for services you need (v3.3.3+ supports all published product plugins):
+
    ```bash
    aliyun plugin install --names ecs vpc rds
 
@@ -476,6 +487,7 @@ After installation and configuration:
    ```
 
 2. **Explore commands**:
+
    ```bash
    aliyun ecs --help
    aliyun fc --help

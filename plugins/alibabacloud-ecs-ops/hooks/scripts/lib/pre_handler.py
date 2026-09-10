@@ -20,7 +20,7 @@ import trace_writer  # noqa: E402
 
 PLUGIN_PREFIX = "alibabacloud"
 STDIN_CAP = 65536
-QODERWORK_MCP_WRAPPERS = ("qw_mcp_call", "qw_mcp_get")
+QODERWORK_MCP_WRAPPERS = ("qw_mcp_call", "qw_mcp_get", "CallMcpTool")
 
 # Aliyun CLI invocation: matches `aliyun ...` at start of command OR
 # after a shell separator (`&&`, `||`, `;`, `|`, `\n`, `(`), with optional
@@ -170,24 +170,36 @@ def main() -> int:
     parent_span = None
     turn = 0
     is_duplicate = False
+    unique_span_key = tool_use_id or key
     try:
         with SessionState(client, session_id) as st:
             st.data["tool_starts"][key] = int(time.time() * 1000)
             # --- Local trace: mark turn active, get parent span ---
             if trace_writer.trace_enabled():
                 st.data["turn_has_trace"] = True
-                this_span_id = tool_use_id or key
                 # Dedup: Claude fires PreToolUse twice for the same
                 # tool_use_id within one turn (symmetric with the
                 # PostToolUse dedup via posted_tool_use_ids). Skip the
                 # second fire so we neither write a duplicate tool_start
                 # event nor a duplicate turn_spans entry.
+                # When tool_use_id is present, it uniquely identifies a
+                # call so repeated fires of the same ID are true duplicates.
+                # When tool_use_id is absent (e.g. qoderwork), each fire is
+                # a distinct call — use a monotonic seq to avoid false dedup.
+                if tool_use_id:
+                    dedup_key = tool_use_id
+                else:
+                    _seq = st.data.get("_pre_seq", 0) + 1
+                    st.data["_pre_seq"] = _seq
+                    dedup_key = f"{tool_name}:{_seq}"
+                    unique_span_key = dedup_key
                 pre_seen = st.data.setdefault("pre_seen_ids", [])
-                if this_span_id and this_span_id in pre_seen:
+                if dedup_key in pre_seen:
                     is_duplicate = True
                 else:
-                    if this_span_id:
-                        pre_seen.append(this_span_id)
+                    pre_seen.append(dedup_key)
+                    if len(pre_seen) > 500:
+                        pre_seen[:] = pre_seen[-500:]
                     # All tool spans parent directly to the prompt span.
                     # Skill association is content-based — see post_handler
                     # ._path_skill_tag (matches the bash command's UA env
@@ -197,7 +209,7 @@ def main() -> int:
                     turn = int(st.data.get("turn", 0))
                     # Record this span for end-of-turn token aggregation
                     st.data.setdefault("turn_spans", []).append({
-                        "span_id": this_span_id,
+                        "span_id": unique_span_key,
                         "parent_span_id": parent_span,
                         "kind": "tool",
                         "tool_use_id": tool_use_id,
@@ -220,7 +232,7 @@ def main() -> int:
             now_ms = int(time.time() * 1000)
             trace_writer.append_trace(client, session_id, {
                 "event": "tool_start",
-                "span_id": tool_use_id or key,
+                "span_id": unique_span_key,
                 "parent_span_id": parent_span,
                 "tool_name": tool_name,
                 "tool_use_id": tool_use_id,

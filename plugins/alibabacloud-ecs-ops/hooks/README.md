@@ -19,8 +19,9 @@
 
 Anonymized usage telemetry shared by all `alibabacloud-*` plugins in this
 repository. Captures per-call hook events from agent clients (Claude Code,
-Codex CLI, QoderWork; VS Code / Copilot CLI remain Phase 2 stubs) and
-uploads them via `uvx alibabacloud.mcp-proxy@latest plugin-telemetry`.
+Codex CLI, QoderWork; VS Code / Copilot CLI remain Phase 2 stubs), queues
+each event as a file on disk, and lets one bounded background worker upload
+them with the pinned `alibabacloud.mcp-proxy==0.5.1 plugin-telemetry` CLI.
 
 Per-client event coverage:
 
@@ -54,22 +55,30 @@ backup is written next to the settings file on every run.
 
 ## Prerequisites
 
-The upload command relies on `uvx` (from [uv](https://docs.astral.sh/uv/)):
+The worker builds a reusable virtualenv with the Python standard library and
+installs the pinned uploader into it, so `python3` with a working `venv` and
+`pip` is all that is required:
 
 ```bash
-# macOS
-brew install uv
-
-# Linux
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.local/bin/env    # add to PATH without restarting shell
-
 # Verify
-uvx --version
+python3 -c 'import venv; print("venv ok")'
+python3 -m pip --version
 ```
 
-If `uvx` is not on PATH, telemetry upload silently no-ops — the agent is
-never blocked. Install `uv` to enable remote telemetry.
+The virtualenv is created once per client directory at
+`<state-dir>/<client>/.venv`, holds `alibabacloud.mcp-proxy==0.5.1`, and is
+reused for every later event — a version marker file skips recreation.
+
+`uv` is optional. It is only used as a fallback when the virtualenv cannot be
+created or the install fails, and then still with a pinned version:
+
+```bash
+uvx --from alibabacloud.mcp-proxy==0.5.1 plugin-telemetry --help
+```
+
+If neither path works, nothing is lost inline: the event file stays in
+`pending/`, is retried up to the retry budget, then dead-lettered into
+`failed/`. The agent is never blocked either way.
 
 ## Quick start
 
@@ -79,7 +88,7 @@ Telemetry is on by default. Three controls:
 | -------------------------- | ------------------------------------------------------------------------------------------- |
 | Disable for current shell  | `export ALIBABACLOUD_TELEMETRY=false`                                                       |
 | Diagnose missing events    | `export ALIBABACLOUD_TELEMETRY_DEBUG=1` then `tail -F <state-dir>/<client>/debug.log`       |
-| Verify before sending      | `export ALIBABACLOUD_TELEMETRY_DRY_RUN=1` (logs the would-be command instead of executing)  |
+| Verify before sending      | `export ALIBABACLOUD_TELEMETRY_DRY_RUN=1` (logs the would-be upload arguments instead of queueing them) |
 
 `<state-dir>` defaults to `~/.cache/alibabacloud-agent-toolkit/telemetry`.
 
@@ -106,11 +115,13 @@ allowlist defined in `telemetry_design.md` — only those fields are ever sent.
 
 ### What gets uploaded
 
-Each event becomes a single CLI invocation, run as a detached background
-process so the agent never waits:
+Each hook fire writes one JSON file into
+`<state-dir>/<client>/telemetry-queue/pending/` and returns immediately. The
+single background worker later turns each queued event into one invocation of
+the pinned uploader, so the agent never waits:
 
 ```
-uvx alibabacloud.mcp-proxy@latest plugin-telemetry \
+<state-dir>/<client>/.venv/bin/plugin-telemetry \
     --client-name <claude-code|codex|qoderwork|vscode> \
     --event-type <skill_invocation|subagent_dispatch|reference_file_read|cli_command_use|mcp_tool_use> \
     --start-timestamp <ISO8601> \
@@ -136,9 +147,16 @@ export ALIBABACLOUD_TELEMETRY=false
 | ----------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
 | `ALIBABACLOUD_TELEMETRY`            | `true`                                                 | Set to `false` to disable all hook uploads (each hook returns immediately)                                                      |
 | `ALIBABACLOUD_TELEMETRY_DEBUG`      | `0`                                                    | When `1`, capture every hook fire decision into `<state-dir>/<client>/debug.log`                                                |
-| `ALIBABACLOUD_TELEMETRY_DRY_RUN`    | `0`                                                    | When `1`, log the would-be `uvx` command without executing it (still writes to `debug.log`)                                     |
+| `ALIBABACLOUD_TELEMETRY_DRY_RUN`    | `0`                                                    | When `1`, log the would-be upload arguments without queueing or uploading (still writes to `debug.log`)                         |
 | `ALIBABACLOUD_TELEMETRY_STATE_DIR`  | `~/.cache/alibabacloud-agent-toolkit/telemetry`        | Override state directory; auto-falls back to `/tmp/alibabacloud-agent-toolkit-telemetry-<uid>` if home cache is unwritable      |
 | `ALIBABACLOUD_TELEMETRY_TRACE_PAYLOAD` | `0`                                                 | When `1`, dump raw stdin payloads to `<state-dir>/<client>/raw-payloads/<event>-<ts>-<pid>.json` for each hook fire. Use only for diagnosing extraction bugs — files contain the full hook payload (sensitive content possible) and can grow large. |
+| `ALIBABACLOUD_TELEMETRY_MAX_QUEUE`  | `500`                                                  | Queue depth cap. When `pending/` holds more files than this, the worker unlinks the excess and logs `Queue overflow`            |
+| `ALIBABACLOUD_TELEMETRY_MAX_CONCURRENT` | `4`                                              | Upload batch size the worker drains per round                                                                                    |
+| `ALIBABACLOUD_TELEMETRY_UPLOAD_TIMEOUT` | `30`                                               | Hard per-upload timeout in seconds; the uploader's whole process group is killed when it expires                                 |
+| `ALIBABACLOUD_TELEMETRY_MAX_RETRIES` | `2`                                                   | Retry budget per event. Once exhausted the event is dead-lettered into `telemetry-queue/failed/`                                  |
+| `ALIBABACLOUD_TELEMETRY_UPLOADER`   | unset                                                  | Override the uploader argv prefix (test hook). When unset the worker uses `<state-dir>/<client>/.venv/bin/plugin-telemetry`     |
+| `ALIBABACLOUD_TELEMETRY_WORKER_DEBUG` | `0`                                                  | When `1`, the worker appends progress lines to `<state-dir>/<client>/worker-debug.log`                                            |
+| `ALIBABACLOUD_TELEMETRY_WORKER_STATE_DIR` | unset                                            | Client directory the worker drains. Set automatically by `telemetry_enqueue.py`; not meant to be exported by hand                |
 | `COPILOT_CLI`                       | unset                                                  | Set to `1` to declare the Copilot CLI client (Phase 2 stub)                                                                     |
 | `CODEX_CLI`                         | unset                                                  | Set to `1` to declare the Codex client (Phase 2 stub)                                                                           |
 | `QODER_WORK`                        | unset                                                  | Set to `1` to declare the QoderWork client. The `openplugin` installer prefixes each registered hook command with this var. |
@@ -153,7 +171,7 @@ export ALIBABACLOUD_TELEMETRY=false
 | Event                | Script                                                | Responsibility                                                                                                                                       |
 | -------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `PreToolUse`         | `pre-tool-trace.sh` → `lib/pre_handler.py`            | Record start timestamp under `tool_starts[<key>]` in per-session state                                                                               |
-| `PostToolUse`        | `post-tool-trace.sh` → `lib/post_handler.py`          | Classify tool, detect status, sanitize, upload event                                                                                                 |
+| `PostToolUse`        | `post-tool-trace.sh` → `lib/post_handler.py`          | Classify tool, detect status, sanitize, queue event for upload                                                                                       |
 | `PostToolUseFailure` | `post-tool-trace.sh` → `lib/post_handler.py`          | Same script; forces `status=failure`. Claude Code routes failed tool calls (including MCP `isError: true`) to this distinct event from successes.   |
 | `Stop`               | `stop-turn-increment.sh` → `lib/stop_handler.py`      | Increment per-session turn counter; opportunistically clean stale state                                                                              |
 | `StopFailure`        | `stop-turn-increment.sh` → `lib/stop_handler.py`      | Same script — applied symmetrically when an API error aborts a turn                                                                                  |
@@ -253,7 +271,7 @@ Four functions, all bounded:
   - Email, CN mobile, IPv4, UUID v4 → `<REDACTED>`
 - `sanitize_cli(cmd)` — legacy helper: keeps the first 3 whitespace-separated tokens, capped at 120 chars (drops args / values that may carry IDs). Not used by the current event pipeline.
 - `sanitize_aliyun_cli(cmd)` — used for `cli_command_use` (Bash `aliyun ...`) and MCP `AlibabaCloud___CallCLI`. Keeps the full command verbatim (operational context for Alibaba Cloud audit) and strips only credential flags + values: `--access-key-id`, `--access-key-secret`, `--secret`, `--secret-key`, `--password`, `--passwd`, `--sts-token`, `--security-token` (both `--flag value` and `--flag=value` forms). Also drops bare `LTAI*` / `STS.*` / JWT tokens as defense-in-depth. Capped at 2000 chars. `--endpoint`, `--endpoint-url`, and `--profile` are intentionally kept — they are operational context, not secrets.
-- `sanitize_tool_input(value)` — used for all **non-CallCLI** MCP `AlibabaCloud___*` tools (`ListProducts`, `ListApis`, `ListProductRegions`, `SearchApis`, `SearchDocument`, `GetApiDefinition`, `GenerateCLICommand`, `ReadDocument`, …). JSON-serializes the `tool_input` dict (sorted keys, compact separators, UTF-8 safe) and runs the full `_CRED_PATTERNS` set against the serialized string (AccessKey / STS / JWT / PEM / Bearer / long base64 blobs → `***`). Capped at 4000 chars. The serialized JSON is uploaded via the same `--cli-command` flag (it carries either a shell command for CallCLI, or a JSON-encoded tool input for other MCP tools — distinguish by `--mcp-tool`).
+- `sanitize_tool_input(value)` — used for all **non-CallCLI** MCP `AlibabaCloud___*` tools (`ListProducts`, `ListApis`, `ListProductRegions`, `SearchApis`, `SearchDocuments`, `GetDocument`, `GetDocumentTree`, `GrepDocuments`, `GetApiDefinition`, `GenerateCLICommand`, …). JSON-serializes the `tool_input` dict (sorted keys, compact separators, UTF-8 safe) and runs the full `_CRED_PATTERNS` set against the serialized string (AccessKey / STS / JWT / PEM / Bearer / long base64 blobs → `***`). Capped at 4000 chars. The serialized JSON is uploaded via the same `--cli-command` flag (it carries either a shell command for CallCLI, or a JSON-encoded tool input for other MCP tools — distinguish by `--mcp-tool`).
 
 ### Bounds
 
@@ -265,14 +283,35 @@ Four functions, all bounded:
 | `--error-message` length     | 200 chars            | post-sanitization                                                                      |
 | `--cli-command` length       | 2000 / 4000 chars    | 2000 for CallCLI shell command (`sanitize_aliyun_cli`); 4000 for other MCP tools' JSON-encoded inputs (`sanitize_tool_input`) |
 | `pre` / `stop` hook timeout  | 3 s                  | configured in `hooks.json`                                                             |
-| `post` / `post-failure` timeout | 15 s              | upload is fire-and-forget, doesn't count toward this                                   |
+| `post` / `post-failure` timeout | 15 s              | the hook only queues an event file; uploading happens in the worker                     |
 | Lock acquisition timeout     | 2 s                  | `_try_flock_exclusive` in `state.py`                                                   |
 | Session state TTL            | 7 days               | auto-cleaned by Stop hook                                                              |
+| Upload queue depth           | 500 events           | `ALIBABACLOUD_TELEMETRY_MAX_QUEUE`; excess is unlinked and logged, never grows unbounded |
+| Upload concurrency           | 4 per round          | `ALIBABACLOUD_TELEMETRY_MAX_CONCURRENT`                                                |
+| Upload hard timeout          | 30 s                 | `ALIBABACLOUD_TELEMETRY_UPLOAD_TIMEOUT`; the whole process group is killed on expiry    |
+| Upload retry budget          | 2 per event          | `ALIBABACLOUD_TELEMETRY_MAX_RETRIES`; then dead-lettered to `telemetry-queue/failed/`   |
+| Worker instances             | 1 per client dir     | non-blocking `flock` on `<state-dir>/<client>/telemetry-worker.lock`                   |
+| Dead-letter retention        | 7 days               | `failed/` entries older than this are pruned by the cleanup pass                        |
+| Stale pending retention      | 24 h                 | `pending/` entries older than this are pruned by the cleanup pass                       |
 
-### Fire-and-forget upload
+### Bounded queue upload
 
-The `post-tool-trace.sh` wrapper detaches the upload as a background subshell
-so the agent never blocks:
+Hooks never upload inline and never spawn a detached per-event process. Each
+hook writes one JSON file into `<state-dir>/<client>/telemetry-queue/pending/`
+via `lib/telemetry_enqueue.py`, makes sure a worker exists, and returns
+success immediately.
+
+`lib/telemetry_worker.py` is that worker. It holds an exclusive `flock` on
+`<state-dir>/<client>/telemetry-worker.lock`, so at most one worker runs per
+client directory; a second start attempt exits quietly instead of piling up.
+It uploads through a fixed virtualenv holding the pinned
+`alibabacloud.mcp-proxy==0.5.1`, created once and reused — no per-event
+`uvx @latest` resolution, and therefore no per-event UV cache growth. Each
+upload runs in its own process group with a hard timeout and is reaped with
+`killpg`, retries are bounded, and an event that exhausts them moves to
+`telemetry-queue/failed/` as a dead letter rather than being retried forever.
+
+This replaced the previous fire-and-forget pattern:
 
 ```bash
 ( uvx alibabacloud.mcp-proxy@latest plugin-telemetry "${args[@]}" \
@@ -280,9 +319,11 @@ so the agent never blocks:
 disown 2>/dev/null
 ```
 
-Failures of `uvx` (network down, package not installed, etc.) do not surface
-to the agent. They are visible in the host shell environment if you trace
-with `strace` / `dtruss`, but never in the user-facing transcript.
+Detaching with `disown` re-parented every `uvx` process to PID 1, so nothing
+reaped them: with no concurrency cap, no timeout and no retry budget, a busy
+session accumulated thousands of orphans and an unbounded UV cache. Upload
+failures are still invisible to the agent — they land in `debug.log` and
+`worker-debug.log`, never in the user-facing transcript.
 
 ## State Files
 
@@ -293,6 +334,13 @@ multi-client operation:
 <state-dir>/
 ├── claude-code/                       # one bucket per client
 │   ├── debug.log                      # client-scoped diagnostic log
+│   ├── worker-debug.log               # worker progress (ALIBABACLOUD_TELEMETRY_WORKER_DEBUG)
+│   ├── telemetry-worker.lock          # flock — guarantees one worker per client dir
+│   ├── .venv/                         # pinned uploader venv (alibabacloud.mcp-proxy==0.5.1)
+│   ├── telemetry-queue/               # bounded upload queue, 0700
+│   │   ├── pending/                   # events awaiting upload
+│   │   │   └── <usec>-<rand8>.json    # {"args": {...}, "retries": N, "timestamp": T}
+│   │   └── failed/                    # dead letters that exhausted the retry budget
 │   ├── sessions/
 │   │   ├── <safe-session>.state.json  # per-session state (turn + tool_starts + trace flags)
 │   │   └── <safe-session>.lock        # fcntl exclusive lock file
@@ -519,7 +567,7 @@ One structured line per hook fire. Common patterns:
 | `[post] event_name=PostToolUseFailure tool=mcp__... decision=upload event=mcp_tool_use status=failure` | Post handled a failed MCP call routed to `PostToolUseFailure`         |
 | `[post] event_name=PostToolUse tool=Bash decision=reject reason=bash-not-aliyun cmd_head=ls`        | Post rejected a non-`aliyun` Bash call (with sanitized command head)     |
 | `[stop] turn=3 session=<id> client=claude-code`                                                     | Stop hook advanced the per-session turn counter                          |
-| `DRYRUN: uvx alibabacloud.mcp-proxy@latest plugin-telemetry --…`                                    | The exact upload command (DRY_RUN mode only)                             |
+| `DRYRUN: queue telemetry event --…`                                                               | The upload arguments that would have been queued (DRY_RUN mode only)     |
 | `decision=opted-out`                                                                                | `ALIBABACLOUD_TELEMETRY=false` short-circuited the hook                  |
 
 ### Reject reason vocabulary
@@ -551,9 +599,12 @@ Recognised by `post_handler.py`:
      `PostToolUseFailure` registration missing in `hooks.json`.
    - **`[post] decision=reject reason=…`** → our filter intentionally
      dropped this. The reason tells you why.
-   - **`[post] decision=upload` but nothing visible at the sink** → check
-     `uvx` is on PATH; turn on `ALIBABACLOUD_TELEMETRY_DRY_RUN=1` to see the
-     exact command we tried to run.
+   - **`[post] decision=upload` but nothing visible at the sink** → the event
+     was only queued. Check `<state-dir>/<client>/telemetry-queue/pending/`
+     for a backlog and `telemetry-queue/failed/` for dead letters, then rerun
+     the worker with `ALIBABACLOUD_TELEMETRY_WORKER_DEBUG=1` to see why
+     uploads are failing. Use `ALIBABACLOUD_TELEMETRY_DRY_RUN=1` to confirm
+     the arguments we would have queued.
 3. Inspect per-session state directly:
 
    ```bash
