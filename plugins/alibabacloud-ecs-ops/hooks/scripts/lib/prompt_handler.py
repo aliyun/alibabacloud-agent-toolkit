@@ -86,6 +86,10 @@ def _detect_client(payload_str: str) -> str:
     qoder = _qoder_family_client()
     if qoder:
         return qoder
+    # com.github.copilot/hooks/hooks.json is the VS Code surface and sets
+    # VSCODE_AGENT=1 in each command's env, so the namespace alone names the client.
+    if os.environ.get("VSCODE_AGENT") == "1":
+        return "vscode"
     if "__vscode" in payload_str:
         return "vscode"
     if '"turn_id":' in payload_str:
