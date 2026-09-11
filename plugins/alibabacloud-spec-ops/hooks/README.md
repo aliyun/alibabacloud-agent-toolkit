@@ -19,7 +19,7 @@
 
 Anonymized usage telemetry shared by all `alibabacloud-*` plugins in this
 repository. Captures per-call hook events from agent clients (Claude Code,
-Codex CLI, and the Qoder family; VS Code / Copilot CLI remain Phase 2 stubs),
+Codex CLI, VS Code, and the Qoder family; Copilot CLI remains a Phase 2 stub),
 queues each event as a file on disk, and lets one bounded background worker
 upload them with the pinned `alibabacloud.mcp-proxy==0.5.1 plugin-telemetry`
 CLI.
@@ -31,12 +31,13 @@ Per-client event coverage:
 | Claude Code  | `hooks.json`               | `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop`, `StopFailure`, `UserPromptSubmit` (6) |
 | Codex CLI    | `codex-hooks.json`         | `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop` (4)                       |
 | Qoder family | `qoderwork-hooks.json`     | `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop` (4 — same as Codex)       |
+| VS Code      | `../com.github.copilot/hooks/hooks.json` | `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop` (4 — same as Codex) |
 
-The Qoder family and Codex share the same 4-event minimal set; this yields the
-same per-tool-call, per-prompt, per-turn granularity as Claude Code's
+The Qoder family, Codex and VS Code share the same 4-event minimal set; this
+yields the same per-tool-call, per-prompt, per-turn granularity as Claude Code's
 6-event set (Claude's extra two events — `PostToolUseFailure` and
 `StopFailure` — are merged into the success-path scripts on Qoder /
-Codex). `UserPromptSubmit` catches direct slash-style skill invocations
+Codex / VS Code). `UserPromptSubmit` catches direct slash-style skill invocations
 (e.g. `/alibabacloud-core:foo args...`) that some clients submit as plain
 prompts instead of firing the `Skill` tool.
 
@@ -169,7 +170,8 @@ export ALIBABACLOUD_TELEMETRY=false
 | `ALIBABACLOUD_TELEMETRY_WORKER_DEBUG` | `0`                                                  | When `1`, the worker appends progress lines to `<state-dir>/<client>/worker-debug.log`                                            |
 | `ALIBABACLOUD_TELEMETRY_WORKER_STATE_DIR` | unset                                            | Client directory the worker drains. Set automatically by `telemetry_enqueue.py`; not meant to be exported by hand                |
 | `COPILOT_CLI`                       | unset                                                  | Set to `1` to declare the Copilot CLI client (Phase 2 stub)                                                                     |
-| `CODEX_CLI`                         | unset                                                  | Set to `1` to declare the Codex client (Phase 2 stub)                                                                           |
+| `CODEX_CLI`                         | unset                                                  | Set to `1` to declare the Codex client. `codex-hooks.json` prefixes each registered hook command with this var.                 |
+| `VSCODE_AGENT`                      | unset                                                  | Set to `1` to declare the VS Code client. `com.github.copilot/hooks/hooks.json` sets this var in the `env` of each registered hook command, so the Agent Plugins 1.0 surface reports `vscode` instead of the `claude-code` default. |
 | `QODER_WORK`                        | unset                                                  | Set to `1` to declare a Qoder-family client. The `openplugin` installer prefixes each registered hook command with this var. Yields `qoderwork` unless one of the vars below narrows it down. |
 | `QODER_WORK_INTEGRATION_MODE`       | unset                                                  | Set to `1` by Qoder-family hosts running in integration mode. On its own it still resolves to `qoderwork`. |
 | `QODER_WORK_INTEGRATION_PRODUCT`    | unset                                                  | Highest-priority Qoder-family marker: when non-empty its value becomes the client name verbatim (sanitized), e.g. `qwenworkcn`. |
@@ -557,9 +559,10 @@ The client identity is determined in priority order:
 1. `COPILOT_CLI=1` env var → `copilot-cli`
 2. `CODEX_CLI=1` env var → `codex`
 3. Qoder-family env var present → the concrete Qoder client (resolved below)
-4. Hook payload contains the literal substring `__vscode` → `vscode`
-5. Hook payload contains the literal substring `"turn_id":` → `codex`
-6. Default → `claude-code`
+4. `VSCODE_AGENT=1` env var → `vscode`
+5. Hook payload contains the literal substring `__vscode` → `vscode`
+6. Hook payload contains the literal substring `"turn_id":` → `codex`
+7. Default → `claude-code`
 
 Every Qoder-family host (qodercli, qoderIDE, QoderWork, QwenWork, …) installs
 the same `qoderwork-hooks.json`, so step 3 resolves the concrete product from
@@ -574,6 +577,15 @@ the environment the host injects:
 Step 3 is only entered when at least one of `QODER_WORK=1`,
 `QODER_WORK_INTEGRATION_MODE=1` or `QODER_AGENT=true` is set, so a plain Claude
 Code session still falls through to `claude-code`.
+
+Steps 4 and 5 both resolve to `vscode`. Step 4 is the one a plugin install
+actually uses: `com.github.copilot/hooks/hooks.json` is the Agent Plugins 1.0
+manifest VS Code reads, and it sets `VSCODE_AGENT=1` in the `env` field of every
+hook command. `env` is part of the hook schema, so the marker reaches the hook
+process whether or not the host shell-parses the command string. Step 5 is the
+older path for a host that marks itself inside the payload instead. Both rank
+below the markers above them, so a default declared by a manifest never
+overrides an identity the host states itself.
 
 The resolved name doubles as the `<state-dir>/<client>/` directory name, so it
 is sanitized with `[^A-Za-z0-9_-]` → `_` and capped at 64. Sanitization is
@@ -702,9 +714,17 @@ pathological large payloads.
 
 ## Phase 2 stubs
 
-`codex-hooks.json` and `lib/post_handler.py:detect_client()` carry TODO
-branches for Codex / QoderWork / VS Code support. Phase 1 only ships
-Claude Code.
+Codex, the Qoder family and VS Code all ship a real manifest and a real
+detection branch, so `COPILOT_CLI` is the only marker still stubbed out.
+
+VS Code has one known coverage gap left: it reports its shell tool as
+`runTerminalCommand`, but `lib/post_handler.py:classify_with_reason()` only
+enters the aliyun-CLI and SKILL.md-read sub-classifiers on the literal name
+`Bash`, so `cli_command_use` and shell-borne `skill_invocation` are dropped on
+VS Code. Everything else still classifies: MCP tool calls match on the
+`alibabacloud` prefix in the server name, `UserPromptSubmit` is
+name-independent, and the file-read branch already accepts `read_file` next to
+`Read`.
 
 ## Codex 安装与启用
 

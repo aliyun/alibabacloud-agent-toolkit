@@ -1,5 +1,6 @@
 #!/bin/bash
-# Client-detection tests, focused on the Qoder family.
+# Client-detection tests, focused on the host-declared markers (Qoder family,
+# Codex, VS Code).
 #
 # qodercli / qoderIDE / QoderWork / QwenWork all install the same
 # qoderwork-hooks.json, so the concrete client is resolved from the environment
@@ -13,6 +14,12 @@
 # the three copies of the sanitize rule agree byte for byte, that the whole
 # family still gets its transcript parsed, and that a real hook fire lands every
 # side's files in the one bucket both implementations computed.
+#
+# A marker only works if the manifest that installs it actually ships it, so the
+# suite also reads every client hook manifest and asserts each command carries
+# the marker its detection branch reads. VS Code regressed exactly that way:
+# com.github.copilot/hooks/hooks.json declared no marker, so every VS Code event
+# fell through to the claude-code default and was attributed to the wrong client.
 
 set -e
 
@@ -35,7 +42,7 @@ note_fail() {
 }
 
 reset_client_env() {
-    unset COPILOT_CLI CODEX_CLI \
+    unset COPILOT_CLI CODEX_CLI VSCODE_AGENT \
         QODER_WORK QODER_WORK_INTEGRATION_MODE QODER_WORK_INTEGRATION_PRODUCT \
         QODER_AGENT QODER_HOOK_SOURCE QODER_IDE
 }
@@ -145,6 +152,15 @@ check_case "codex marker"                 "codex"        CODEX_CLI=1
 check_case "vscode payload"               "vscode"       '{"__vscode":true}'
 check_case "codex turn_id payload"        "codex"        '{"turn_id":"t1"}'
 
+# VS Code declares itself with VSCODE_AGENT=1, set in the env field of every
+# command in com.github.copilot/hooks/hooks.json. A real VS Code payload carries
+# no __vscode substring, so without the marker it fell through to the claude-code
+# default and every VS Code event was attributed to the wrong client.
+check_case "vscode agent marker"          "vscode"       VSCODE_AGENT=1
+check_case "vscode marker on real payload" "vscode" \
+    '{"session_id":"s1","tool_name":"runTerminalCommand"}' VSCODE_AGENT=1
+check_case "vscode marker value not 1"    "claude-code"  VSCODE_AGENT=true
+
 # Legacy Qoder marker still means plain qoderwork.
 check_case "QODER_WORK=1 only"            "qoderwork"    QODER_WORK=1
 check_case "integration mode only"        "qoderwork"    QODER_WORK_INTEGRATION_MODE=1
@@ -174,6 +190,12 @@ check_case "copilot beats qoder"          "copilot-cli" \
     COPILOT_CLI=1 QODER_WORK=1 QODER_WORK_INTEGRATION_PRODUCT=qwenworkcn
 check_case "codex beats qoder"            "codex" \
     CODEX_CLI=1 QODER_WORK=1 QODER_WORK_INTEGRATION_PRODUCT=qwenworkcn
+
+# VSCODE_AGENT is a default the manifest declares, so a marker the host itself
+# injects is more specific and still wins.
+check_case "qoder beats vscode marker"    "qoderwork"    QODER_WORK=1 VSCODE_AGENT=1
+check_case "copilot beats vscode marker"  "copilot-cli"  COPILOT_CLI=1 VSCODE_AGENT=1
+check_case "codex beats vscode marker"    "codex"        CODEX_CLI=1 VSCODE_AGENT=1
 
 # The resolved name doubles as a directory name, so it is sanitized and capped
 # identically on both sides — byte-wise, so non-ASCII cannot split a bucket.
@@ -388,6 +410,10 @@ e2e_case() {
 }
 
 e2e_case "no client env"        "claude-code"
+# This is what a fire from com.github.copilot/hooks/hooks.json looks like: the
+# manifest sets the marker in each command's env, so the whole VS Code surface
+# has to land in one vscode/ bucket instead of the claude-code default.
+e2e_case "vscode agent marker"  "vscode"      VSCODE_AGENT=1
 e2e_case "legacy qoderwork"     "qoderwork"   QODER_WORK=1
 e2e_case "qwenworkcn product"   "qwenworkcn" \
     QODER_WORK=1 QODER_WORK_INTEGRATION_MODE=1 QODER_WORK_INTEGRATION_PRODUCT=qwenworkcn
@@ -402,6 +428,116 @@ e2e_case "mixed ascii product"  "qwen______cn" \
     QODER_WORK=1 QODER_WORK_INTEGRATION_PRODUCT='qwen办公cn'
 e2e_case "product capped at 64" "$(printf '%064d' 0 | tr '0' 'a')" \
     QODER_WORK=1 QODER_WORK_INTEGRATION_PRODUCT="$(printf '%080d' 0 | tr '0' 'a')"
+
+echo ""
+echo "=== Test: client hook manifests declare the marker detection reads ==="
+
+# Sections 1-5 prove the two implementations agree with each other, but they
+# cannot see a marker nobody ever sets: with no VSCODE_AGENT in the environment
+# both sides returned claude-code, agreed perfectly, and reported every VS Code
+# event as the wrong client. So assert the pairing from the manifest side too —
+# each client-specific hooks file must declare the marker its detection branch
+# reads. hooks/hooks.json (the Claude format) is skipped on purpose: it declares
+# no marker because claude-code is the fall-through default.
+pluginsDir="$(cd "$HOOKS_DIR/../../.." && pwd)"
+
+manifestCheckFailed=0
+python3 - <<PYEOF || manifestCheckFailed=1
+import json
+import os
+import sys
+
+plugins_dir = "$pluginsDir"
+
+# Only a directory carrying the root Agent Plugins manifest is a real plugin.
+# plugins/alibabacloud-agent and plugins/alibabacloud-data-analytics hold
+# nothing but .gitkeep today, and a placeholder must not be required to ship
+# three client hook manifests.
+PLUGIN_MARKER = "plugin.json"
+
+# How each manifest declares its marker. VS Code's hook schema documents an
+# 'env' field, so com.github.copilot/ uses it: that reaches the hook process
+# whether or not the host shell-parses the command string. An inline "VAR=1"
+# prefix would become argv[0] under a quote-aware tokenizer and break the hook
+# outright. Codex and QoderWork bake the prefix straight into the committed
+# command string instead.
+MANIFESTS = {
+    "com.github.copilot/hooks/hooks.json": ("env", "VSCODE_AGENT", "1"),
+    "hooks/codex-hooks.json": ("prefix", "CODEX_CLI=1", None),
+    "hooks/qoderwork-hooks.json": ("prefix", "QODER_WORK=1", None),
+}
+
+
+def hook_entries(hooks):
+    for groups in hooks.values():
+        if not isinstance(groups, list):
+            continue
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            for hook in group.get("hooks", []):
+                if isinstance(hook, dict):
+                    yield hook
+
+
+def declares(hook, kind, key, value):
+    if kind == "env":
+        env = hook.get("env")
+        return isinstance(env, dict) and env.get(key) == value
+    command = hook.get("command")
+    return isinstance(command, str) and command.startswith(key + " ")
+
+
+def label(kind, key, value):
+    return "env %s=%s" % (key, value) if kind == "env" else "prefix %s" % key
+
+
+failed = 0
+scanned = 0
+for plugin in sorted(os.listdir(plugins_dir)):
+    plugin_dir = os.path.join(plugins_dir, plugin)
+    if not os.path.isdir(plugin_dir):
+        continue
+    if not os.path.isfile(os.path.join(plugin_dir, PLUGIN_MARKER)):
+        continue
+    scanned += 1
+    for rel, (kind, key, value) in MANIFESTS.items():
+        path = os.path.join(plugin_dir, rel)
+        if not os.path.isfile(path):
+            print("FAIL: %s ships no %s, so that client's hooks never run"
+                  % (plugin, rel))
+            failed = 1
+            continue
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        entries = list(hook_entries(data.get("hooks", {})))
+        if not entries:
+            print("FAIL: %s/%s declares no hook command" % (plugin, rel))
+            failed = 1
+            continue
+        missing = [e for e in entries if not declares(e, kind, key, value)]
+        if missing:
+            print("FAIL: %s/%s has %d of %d hook(s) without %s:"
+                  % (plugin, rel, len(missing), len(entries),
+                     label(kind, key, value)))
+            for e in missing:
+                print("        %s" % e.get("command"))
+            failed = 1
+        else:
+            print("  ok: %s/%s -> all %d hook(s) declare %s"
+                  % (plugin, rel, len(entries), label(kind, key, value)))
+
+if not scanned:
+    print("FAIL: no plugin carrying a root %s found under %s"
+          % (PLUGIN_MARKER, plugins_dir))
+    failed = 1
+
+sys.exit(failed)
+PYEOF
+
+if [ "$manifestCheckFailed" -ne 0 ]; then
+    note_fail "client hook manifests declare the marker their detection branch reads"
+fi
 
 echo ""
 if [ "$fail" -ne 0 ]; then

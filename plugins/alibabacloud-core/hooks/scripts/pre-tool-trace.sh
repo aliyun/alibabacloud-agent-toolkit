@@ -44,6 +44,9 @@ detect_client_bash() {
     local qoder
     qoder=$(qoder_family_client_bash)
     if [ -n "$qoder" ]; then echo "$qoder"; return; fi
+    # com.github.copilot/hooks/hooks.json is the VS Code surface and sets
+    # VSCODE_AGENT=1 in each command's env, so the namespace alone names the client.
+    if [ "$VSCODE_AGENT" = "1" ]; then echo "vscode"; return; fi
     case "${1:-}" in *__vscode*) echo "vscode"; return ;; esac
     case "${1:-}" in *\"turn_id\":*) echo "codex"; return ;; esac
     echo "claude-code"

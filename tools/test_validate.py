@@ -157,13 +157,13 @@ class EcsManifestTests(unittest.TestCase):
             json.loads(path.read_text(encoding="utf-8"))["version"]
             for path in paths
         }
-        self.assertEqual({"0.0.9"}, versions)
+        self.assertEqual({"0.0.10"}, versions)
 
     def test_marketplace_version_matches(self) -> None:
         marketplace = repo_validate.REPO_ROOT / ".claude-plugin/marketplace.json"
         entries = json.loads(marketplace.read_text(encoding="utf-8"))["plugins"]
         entry = next(e for e in entries if e["name"] == "alibabacloud-ecs-ops")
-        self.assertEqual("0.0.9", entry["version"])
+        self.assertEqual("0.0.10", entry["version"])
 
     def test_manifests_point_at_this_repository(self) -> None:
         plugin_dir = repo_validate.REPO_ROOT / "plugins/alibabacloud-ecs-ops"
