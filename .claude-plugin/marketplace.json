@@ -17,7 +17,7 @@
       ],
       "name": "alibabacloud-core",
       "source": "./plugins/alibabacloud-core",
-      "version": "1.0.37"
+      "version": "1.0.38"
     },
     {
       "category": "cloud",
@@ -34,7 +34,7 @@
       ],
       "name": "alibabacloud-spec-ops",
       "source": "./plugins/alibabacloud-spec-ops",
-      "version": "0.1.8"
+      "version": "0.1.9"
     },
     {
       "category": "cloud",
@@ -47,7 +47,7 @@
       ],
       "name": "alibabacloud-ecs-ops",
       "source": "./plugins/alibabacloud-ecs-ops",
-      "version": "0.0.8"
+      "version": "0.0.9"
     }
   ]
 }
