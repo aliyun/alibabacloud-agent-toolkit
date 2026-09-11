@@ -115,6 +115,31 @@ The installer patches `~/.qoderwork/settings.json` with the same 4-event
 hook set Codex uses (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`,
 `Stop`) and is idempotent — re-runs only refresh this plugin's entries.
 
+#### VS Code
+
+Each plugin ships a root `plugin.json` in the portable
+[Agent Plugins 1.0](https://agent-plugins.org) format, which VS Code
+auto-detects. Skills are then read from `skills/`, MCP servers from
+`mcp.json`, and hooks from `com.github.copilot/hooks/hooks.json`.
+
+Register this repository as a marketplace in `settings.json`:
+
+```json
+"chat.plugins.marketplaces": [
+    "aliyun/alibabacloud-agent-toolkit"
+]
+```
+
+Then search `@agentPlugins` in the Extensions view and select **Install**.
+
+To iterate on a local clone instead, register the plugin directory directly:
+
+```json
+"chat.pluginLocations": {
+    "/path/to/alibabacloud-agent-toolkit/plugins/alibabacloud-core": true
+}
+```
+
 ## Use Spec-Ops: Spec-Driven Workflow
 
 Want an expert-guided, spec-driven flow that takes "I need a web app on aliyun" all the way to live infrastructure? One command:

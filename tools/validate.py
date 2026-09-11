@@ -21,6 +21,39 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 KEBAB_RE = re.compile(r"^[a-z][a-z0-9]+(-[a-z0-9]+)*$")
 ICON_EXTENSIONS = {".svg", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".ico"}
 
+# Agent Plugins 1.0 — the format VS Code auto-detects from a root plugin.json.
+AGENT_PLUGINS_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
+AGENT_PLUGINS_MCP_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"
+# Per-transport shape of an Agent Plugins MCP server; every variant is closed.
+AGENT_PLUGINS_MCP_SERVERS = {
+    "stdio": ({"type", "command", "args", "env", "cwd"}, "command"),
+    "streamable-http": ({"type", "url", "headers"}, "url"),
+    "sse": ({"type", "url", "headers"}, "url"),
+}
+# ${PLUGIN_ROOT} / ${PLUGIN_DATA} are injected by the host, not by the plugin.
+AGENT_PLUGINS_RESERVED_ENV = {"PLUGIN_ROOT", "PLUGIN_DATA"}
+AGENT_PLUGINS_NAME_RE = re.compile(r"^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
+AGENT_PLUGINS_MANIFEST_KEYS = {
+    "$schema", "name", "version", "description", "author",
+    "homepage", "repository", "license", "keywords", "extensions",
+}
+AGENT_PLUGINS_AUTHOR_KEYS = {"name", "email", "url"}
+PLUGIN_ROOT_TOKEN = "${PLUGIN_ROOT}"
+PLUGIN_ROOT_REF_RE = re.compile(r"\$\{PLUGIN_ROOT\}/([^\s\"']+)")
+# Hook lifecycle events VS Code dispatches to plugin hooks.
+VSCODE_HOOK_EVENTS = {
+    "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+    "PreCompact", "SubagentStart", "SubagentStop", "Stop",
+}
+# Every per-plugin manifest that carries a version and must stay in agreement.
+PLUGIN_VERSION_MANIFESTS = (
+    "plugin.json",
+    ".claude-plugin/plugin.json",
+    ".codex-plugin/plugin.json",
+    ".qoder-plugin/plugin.json",
+    "openclaw.plugin.json",
+)
+
 errors: list[str] = []
 
 
@@ -29,19 +62,24 @@ def error(msg: str) -> None:
     print(f"  ERROR: {msg}", file=sys.stderr)
 
 
+def rel(path: Path) -> Path:
+    """Repo-relative path for messages, tolerating paths outside the repo."""
+    return path.relative_to(REPO_ROOT) if path.is_relative_to(REPO_ROOT) else path
+
+
 def validate_json(path: Path, required_keys: list[str]) -> dict | None:
     """Validate a JSON file exists, parses, and has required keys."""
     if not path.exists():
-        error(f"Missing file: {path.relative_to(REPO_ROOT)}")
+        error(f"Missing file: {rel(path)}")
         return None
     try:
         data = json.loads(path.read_text())
     except json.JSONDecodeError as e:
-        error(f"Invalid JSON in {path.relative_to(REPO_ROOT)}: {e}")
+        error(f"Invalid JSON in {rel(path)}: {e}")
         return None
     for key in required_keys:
         if key not in data:
-            error(f"Missing key '{key}' in {path.relative_to(REPO_ROOT)}")
+            error(f"Missing key '{key}' in {rel(path)}")
     return data
 
 
@@ -278,6 +316,160 @@ def validate_plugin_icon(plugin_dir: Path) -> None:
         error(f"PNG plugin icon must be 256x256: {icon_path} is {width}x{height}")
 
 
+def validate_agent_plugins_manifest(plugin_dir: Path) -> dict | None:
+    """Validate the root Agent Plugins 1.0 manifest that VS Code auto-detects."""
+    path = plugin_dir / "plugin.json"
+    data = validate_json(path, ["$schema", "name", "version"])
+    if data is None:
+        return None
+    if data.get("$schema") != AGENT_PLUGINS_SCHEMA:
+        error(f"'$schema' must be {AGENT_PLUGINS_SCHEMA} in {rel(path)}")
+    unknown = sorted(set(data) - AGENT_PLUGINS_MANIFEST_KEYS)
+    if unknown:
+        error(f"Unknown key(s) {unknown} in {rel(path)}")
+    author = data.get("author")
+    if author is not None:
+        if not isinstance(author, dict):
+            error(f"'author' must be an object in {rel(path)}")
+        else:
+            unknown_author = sorted(set(author) - AGENT_PLUGINS_AUTHOR_KEYS)
+            if unknown_author:
+                error(f"Unknown 'author' key(s) {unknown_author} in {rel(path)}")
+    name = data.get("name")
+    if isinstance(name, str):
+        if len(name) > 64:
+            error(f"Plugin name exceeds 64 chars in {rel(path)}")
+        elif not AGENT_PLUGINS_NAME_RE.match(name):
+            error(f"Plugin name '{name}' is not a valid Agent Plugins name in {rel(path)}")
+        elif name != plugin_dir.name:
+            error(f"Plugin name '{name}' does not match directory '{plugin_dir.name}' in {rel(path)}")
+    return data
+
+
+def validate_agent_plugins_mcp(plugin_dir: Path) -> None:
+    """Validate root mcp.json and keep it in agreement with the .mcp.json it mirrors."""
+    legacy_path = plugin_dir / ".mcp.json"
+    if not legacy_path.exists():
+        return
+    path = plugin_dir / "mcp.json"
+    data = validate_json(path, ["$schema", "mcpServers"])
+    if data is None:
+        return
+    if data.get("$schema") != AGENT_PLUGINS_MCP_SCHEMA:
+        error(f"'$schema' must be {AGENT_PLUGINS_MCP_SCHEMA} in {rel(path)}")
+    servers = data.get("mcpServers")
+    if not isinstance(servers, dict):
+        error(f"'mcpServers' must be an object in {rel(path)}")
+        return
+    for srv_name, srv in servers.items():
+        if not isinstance(srv, dict):
+            error(f"MCP server '{srv_name}' must be an object in {rel(path)}")
+            continue
+        srv_type = srv.get("type")
+        if srv_type not in AGENT_PLUGINS_MCP_SERVERS:
+            supported = sorted(AGENT_PLUGINS_MCP_SERVERS)
+            error(f"MCP server '{srv_name}' has unsupported type '{srv_type}'; expected one of {supported} in {rel(path)}")
+            continue
+        allowed, required_key = AGENT_PLUGINS_MCP_SERVERS[srv_type]
+        if not srv.get(required_key):
+            error(f"MCP server '{srv_name}' is {srv_type} but missing '{required_key}' in {rel(path)}")
+        unknown = sorted(set(srv) - allowed)
+        if unknown:
+            error(f"MCP server '{srv_name}' has unknown key(s) {unknown} in {rel(path)}")
+        reserved = sorted(AGENT_PLUGINS_RESERVED_ENV & set(srv.get("env") or {}))
+        if reserved:
+            error(f"MCP server '{srv_name}' must not set reserved env {reserved} in {rel(path)}")
+
+    try:
+        legacy_servers = json.loads(legacy_path.read_text(encoding="utf-8")).get("mcpServers", {})
+    except (OSError, json.JSONDecodeError):
+        return  # already reported by the .mcp.json check
+    if not isinstance(legacy_servers, dict):
+        return
+    if set(legacy_servers) != set(servers):
+        drifted = sorted(set(legacy_servers) ^ set(servers))
+        error(f"mcp.json and .mcp.json disagree on servers {drifted} in {plugin_dir.name}")
+    for srv_name in sorted(set(legacy_servers) & set(servers)):
+        expected = dict(legacy_servers[srv_name]) if isinstance(legacy_servers[srv_name], dict) else {}
+        expected.setdefault("type", "stdio")
+        if expected != servers.get(srv_name):
+            error(f"MCP server '{srv_name}' differs between mcp.json and .mcp.json in {plugin_dir.name}")
+
+
+def _hook_commands(hooks: dict) -> list[str]:
+    """Flatten a hooks object into its decoded command strings."""
+    commands: list[str] = []
+    for groups in hooks.values():
+        if not isinstance(groups, list):
+            continue
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            for hook in group.get("hooks", []):
+                if isinstance(hook, dict) and isinstance(hook.get("command"), str):
+                    commands.append(hook["command"])
+    return commands
+
+
+def validate_copilot_hooks(plugin_dir: Path) -> None:
+    """Validate the VS Code hook manifest under com.github.copilot/."""
+    path = plugin_dir / "com.github.copilot" / "hooks" / "hooks.json"
+    if not path.exists():
+        if (plugin_dir / "hooks" / "hooks.json").exists():
+            error(
+                "Agent Plugins 1.0 does not read hooks/hooks.json; "
+                f"add {rel(plugin_dir / 'com.github.copilot' / 'hooks' / 'hooks.json')}"
+            )
+        return
+    data = validate_json(path, ["hooks"])
+    if data is None:
+        return
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        error(f"'hooks' must be an object in {rel(path)}")
+        return
+    for event in sorted(hooks):
+        if event not in VSCODE_HOOK_EVENTS:
+            error(f"Hook event '{event}' is not supported by VS Code in {rel(path)}")
+    for command in _hook_commands(hooks):
+        if PLUGIN_ROOT_TOKEN not in command:
+            error(f"Hook command must reference {PLUGIN_ROOT_TOKEN} in {rel(path)}: {command}")
+        for ref in PLUGIN_ROOT_REF_RE.findall(command):
+            if not (plugin_dir / ref).is_file():
+                error(f"Hook command references missing file '{ref}' in {rel(path)}")
+
+
+def validate_version_consistency(plugin_dir: Path) -> None:
+    """Every client manifest and the root marketplace entry must agree on version."""
+    versions: dict[str, str] = {}
+    for manifest in PLUGIN_VERSION_MANIFESTS:
+        path = plugin_dir / manifest
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue  # already reported by validate_json
+        if isinstance(data.get("version"), str):
+            versions[manifest] = data["version"]
+    if len(set(versions.values())) > 1:
+        error(f"Plugin version mismatch in {plugin_dir.name}: {versions}")
+
+    marketplace = REPO_ROOT / ".claude-plugin" / "marketplace.json"
+    if not versions or not marketplace.is_file():
+        return
+    try:
+        entries = json.loads(marketplace.read_text(encoding="utf-8")).get("plugins", [])
+    except json.JSONDecodeError:
+        return
+    for entry in entries:
+        if entry.get("name") == plugin_dir.name and entry.get("version") not in set(versions.values()):
+            error(
+                f"Marketplace version '{entry.get('version')}' for '{plugin_dir.name}' "
+                f"does not match plugin manifests {sorted(set(versions.values()))}"
+            )
+
+
 def validate_plugin(plugin_dir: Path) -> None:
     """Validate a single plugin's manifests and skills."""
     name = plugin_dir.name
@@ -313,6 +505,14 @@ def validate_plugin(plugin_dir: Path) -> None:
                     error(f"MCP server '{srv_name}' is stdio but missing 'command'")
                 elif srv_type == "http" and "url" not in srv:
                     error(f"MCP server '{srv_name}' is http but missing 'url'")
+
+    # Agent Plugins 1.0 manifest — the format VS Code auto-detects
+    if validate_agent_plugins_manifest(plugin_dir) is not None:
+        validate_agent_plugins_mcp(plugin_dir)
+        validate_copilot_hooks(plugin_dir)
+
+    # Version agreement across every client manifest and the marketplace
+    validate_version_consistency(plugin_dir)
 
     # Skills in this plugin
     skills_dir = plugin_dir / "skills"
