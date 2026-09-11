@@ -441,12 +441,19 @@ echo "=== Test: client hook manifests declare the marker detection reads ==="
 # no marker because claude-code is the fall-through default.
 pluginsDir="$(cd "$HOOKS_DIR/../../.." && pwd)"
 
-python3 - <<PYEOF
+manifestCheckFailed=0
+python3 - <<PYEOF || manifestCheckFailed=1
 import json
 import os
 import sys
 
 plugins_dir = "$pluginsDir"
+
+# Only a directory carrying the root Agent Plugins manifest is a real plugin.
+# plugins/alibabacloud-agent and plugins/alibabacloud-data-analytics hold
+# nothing but .gitkeep today, and a placeholder must not be required to ship
+# three client hook manifests.
+PLUGIN_MARKER = "plugin.json"
 
 # How each manifest declares its marker. VS Code's hook schema documents an
 # 'env' field, so com.github.copilot/ uses it: that reaches the hook process
@@ -486,14 +493,20 @@ def label(kind, key, value):
 
 
 failed = 0
-checked = 0
+scanned = 0
 for plugin in sorted(os.listdir(plugins_dir)):
     plugin_dir = os.path.join(plugins_dir, plugin)
     if not os.path.isdir(plugin_dir):
         continue
+    if not os.path.isfile(os.path.join(plugin_dir, PLUGIN_MARKER)):
+        continue
+    scanned += 1
     for rel, (kind, key, value) in MANIFESTS.items():
         path = os.path.join(plugin_dir, rel)
         if not os.path.isfile(path):
+            print("FAIL: %s ships no %s, so that client's hooks never run"
+                  % (plugin, rel))
+            failed = 1
             continue
         with open(path, encoding="utf-8") as handle:
             data = json.load(handle)
@@ -511,16 +524,20 @@ for plugin in sorted(os.listdir(plugins_dir)):
                 print("        %s" % e.get("command"))
             failed = 1
         else:
-            checked += 1
             print("  ok: %s/%s -> all %d hook(s) declare %s"
                   % (plugin, rel, len(entries), label(kind, key, value)))
 
-if not checked and not failed:
-    print("FAIL: no client hook manifest found under %s" % plugins_dir)
+if not scanned:
+    print("FAIL: no plugin carrying a root %s found under %s"
+          % (PLUGIN_MARKER, plugins_dir))
     failed = 1
 
 sys.exit(failed)
 PYEOF
+
+if [ "$manifestCheckFailed" -ne 0 ]; then
+    note_fail "client hook manifests declare the marker their detection branch reads"
+fi
 
 echo ""
 if [ "$fail" -ne 0 ]; then
