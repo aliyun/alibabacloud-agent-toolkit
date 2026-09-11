@@ -72,6 +72,23 @@ for plugin in "$repoRoot"/plugins/*/; do
     fi
 done
 
+# 5. The VS Code hook manifest follows the same canonical-copy rule.
+canonicalCopilot="$repoRoot/plugins/alibabacloud-core/com.github.copilot/hooks/hooks.json"
+if [ -f "$canonicalCopilot" ]; then
+    for plugin in "$repoRoot"/plugins/*/; do
+        name=$(basename "$plugin")
+        [ "$name" = "alibabacloud-core" ] && continue
+        copilot="$plugin/com.github.copilot/hooks/hooks.json"
+        if [ -d "$plugin/hooks" ] && [ ! -f "$copilot" ]; then
+            echo "FAIL: $name ships hooks/ but no com.github.copilot/hooks/hooks.json — VS Code would load no hooks"
+            fail=1
+        elif [ -f "$copilot" ] && ! cmp -s "$canonicalCopilot" "$copilot"; then
+            echo "FAIL: $name/com.github.copilot/hooks/hooks.json diverged from canonical alibabacloud-core copy"
+            fail=1
+        fi
+    done
+fi
+
 if [ "$fail" -eq 0 ]; then
     echo "PASS: hooks layout OK (canonical: plugins/alibabacloud-core/hooks)"
 fi

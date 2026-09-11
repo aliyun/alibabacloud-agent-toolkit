@@ -150,16 +150,20 @@ class PluginIconValidationTests(unittest.TestCase):
 class EcsManifestTests(unittest.TestCase):
     def test_manifest_versions_match(self) -> None:
         plugin_dir = repo_validate.REPO_ROOT / "plugins/alibabacloud-ecs-ops"
-        paths = (
-            plugin_dir / ".claude-plugin/plugin.json",
-            plugin_dir / ".codex-plugin/plugin.json",
-            plugin_dir / ".qoder-plugin/plugin.json",
+        paths = tuple(
+            plugin_dir / manifest for manifest in repo_validate.PLUGIN_VERSION_MANIFESTS
         )
         versions = {
             json.loads(path.read_text(encoding="utf-8"))["version"]
             for path in paths
         }
-        self.assertEqual({"0.0.7"}, versions)
+        self.assertEqual({"0.0.8"}, versions)
+
+    def test_marketplace_version_matches(self) -> None:
+        marketplace = repo_validate.REPO_ROOT / ".claude-plugin/marketplace.json"
+        entries = json.loads(marketplace.read_text(encoding="utf-8"))["plugins"]
+        entry = next(e for e in entries if e["name"] == "alibabacloud-ecs-ops")
+        self.assertEqual("0.0.8", entry["version"])
 
     def test_qoder_manifest_declares_hooks_and_mcp(self) -> None:
         path = repo_validate.REPO_ROOT / "plugins/alibabacloud-ecs-ops/.qoder-plugin/plugin.json"
@@ -180,6 +184,205 @@ class EcsManifestTests(unittest.TestCase):
         self.assertEqual("Cloud", interface["category"])
         self.assertTrue(interface["capabilities"])
         self.assertTrue(interface["defaultPrompt"])
+
+
+class AgentPluginsManifestTests(unittest.TestCase):
+    def setUp(self) -> None:
+        repo_validate.errors.clear()
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.plugin_dir = Path(self.temp_dir.name) / "example-plugin"
+        (self.plugin_dir / "hooks" / "scripts").mkdir(parents=True)
+        self.script = self.plugin_dir / "hooks/scripts/trace.sh"
+        self.script.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    def write(self, relative: str, payload: object) -> Path:
+        path = self.plugin_dir / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return path
+
+    def errors_from(self, validator: str) -> list[str]:
+        repo_validate.errors.clear()
+        with redirect_stderr(io.StringIO()):
+            getattr(repo_validate, validator)(self.plugin_dir)
+        return list(repo_validate.errors)
+
+    def manifest(self, **overrides: object) -> dict:
+        base: dict = {
+            "$schema": repo_validate.AGENT_PLUGINS_SCHEMA,
+            "name": "example-plugin",
+            "version": "1.0.0",
+            "description": "Example plugin",
+            "author": {"name": "Alibaba Cloud"},
+        }
+        base.update(overrides)
+        return base
+
+    def hooks(self, event: str = "PreToolUse", command: str | None = None) -> dict:
+        return {
+            "hooks": {
+                event: [
+                    {
+                        "matcher": "*",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": command
+                                or 'bash "${PLUGIN_ROOT}/hooks/scripts/trace.sh"',
+                                "timeout": 3,
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+
+    def test_accepts_valid_manifest(self) -> None:
+        self.write("plugin.json", self.manifest())
+        self.assertEqual([], self.errors_from("validate_agent_plugins_manifest"))
+
+    def test_rejects_wrong_schema(self) -> None:
+        self.write("plugin.json", self.manifest(**{"$schema": "https://example.test/plugin.json"}))
+        self.assertTrue(any("'$schema'" in e for e in self.errors_from("validate_agent_plugins_manifest")))
+
+    def test_rejects_unknown_manifest_key(self) -> None:
+        self.write("plugin.json", self.manifest(mcpServers="./.mcp.json"))
+        self.assertTrue(any("Unknown key(s)" in e for e in self.errors_from("validate_agent_plugins_manifest")))
+
+    def test_rejects_unknown_author_key(self) -> None:
+        self.write("plugin.json", self.manifest(author={"handle": "Alibaba Cloud"}))
+        self.assertTrue(any("'author' key" in e for e in self.errors_from("validate_agent_plugins_manifest")))
+
+    def test_rejects_name_directory_mismatch(self) -> None:
+        self.write("plugin.json", self.manifest(name="other-plugin"))
+        self.assertTrue(any("does not match directory" in e for e in self.errors_from("validate_agent_plugins_manifest")))
+
+    def test_rejects_invalid_name_pattern(self) -> None:
+        (Path(self.temp_dir.name) / "Example_Plugin").mkdir()
+        self.plugin_dir = Path(self.temp_dir.name) / "Example_Plugin"
+        self.write("plugin.json", self.manifest(name="Example_Plugin"))
+        self.assertTrue(any("not a valid Agent Plugins name" in e for e in self.errors_from("validate_agent_plugins_manifest")))
+
+    def test_mcp_requires_explicit_type(self) -> None:
+        self.write(".mcp.json", {"mcpServers": {"example-plugin": {"command": "uvx"}}})
+        self.write("mcp.json", {
+            "$schema": repo_validate.AGENT_PLUGINS_MCP_SCHEMA,
+            "mcpServers": {"example-plugin": {"command": "uvx"}},
+        })
+        errors = self.errors_from("validate_agent_plugins_mcp")
+        self.assertTrue(any("unsupported type 'None'" in e for e in errors))
+
+    def test_mcp_rejects_http_transport(self) -> None:
+        self.write(".mcp.json", {"mcpServers": {"example-plugin": {"url": "https://example.test/mcp"}}})
+        self.write("mcp.json", {
+            "$schema": repo_validate.AGENT_PLUGINS_MCP_SCHEMA,
+            "mcpServers": {"example-plugin": {"type": "http", "url": "https://example.test/mcp"}},
+        })
+        errors = self.errors_from("validate_agent_plugins_mcp")
+        self.assertTrue(any("unsupported type 'http'" in e for e in errors))
+
+    def test_mcp_rejects_unknown_server_key(self) -> None:
+        self.write(".mcp.json", {"mcpServers": {"example-plugin": {"command": "uvx"}}})
+        self.write("mcp.json", {
+            "$schema": repo_validate.AGENT_PLUGINS_MCP_SCHEMA,
+            "mcpServers": {"example-plugin": {"type": "stdio", "command": "uvx", "url": "https://example.test"}},
+        })
+        self.assertTrue(any("unknown key(s) ['url']" in e for e in self.errors_from("validate_agent_plugins_mcp")))
+
+    def test_mcp_rejects_reserved_env(self) -> None:
+        self.write(".mcp.json", {"mcpServers": {"example-plugin": {"command": "uvx"}}})
+        self.write("mcp.json", {
+            "$schema": repo_validate.AGENT_PLUGINS_MCP_SCHEMA,
+            "mcpServers": {
+                "example-plugin": {
+                    "type": "stdio",
+                    "command": "uvx",
+                    "env": {"PLUGIN_ROOT": "/tmp"},
+                }
+            },
+        })
+        self.assertTrue(any("reserved env" in e for e in self.errors_from("validate_agent_plugins_mcp")))
+
+    def test_mcp_accepts_stdio_server_declared_in_dot_mcp_json(self) -> None:
+        self.write(".mcp.json", {"mcpServers": {"example-plugin": {"command": "uvx", "args": ["proxy"]}}})
+        self.write("mcp.json", {
+            "$schema": repo_validate.AGENT_PLUGINS_MCP_SCHEMA,
+            "mcpServers": {"example-plugin": {"type": "stdio", "command": "uvx", "args": ["proxy"]}},
+        })
+        self.assertEqual([], self.errors_from("validate_agent_plugins_mcp"))
+
+    def test_mcp_detects_server_drift(self) -> None:
+        self.write(".mcp.json", {"mcpServers": {"example-plugin": {"command": "uvx"}}})
+        self.write("mcp.json", {
+            "$schema": repo_validate.AGENT_PLUGINS_MCP_SCHEMA,
+            "mcpServers": {"renamed": {"type": "stdio", "command": "uvx"}},
+        })
+        self.assertTrue(any("disagree on servers" in e for e in self.errors_from("validate_agent_plugins_mcp")))
+
+    def test_mcp_detects_field_drift(self) -> None:
+        self.write(".mcp.json", {"mcpServers": {"example-plugin": {"command": "uvx", "args": ["a"]}}})
+        self.write("mcp.json", {
+            "$schema": repo_validate.AGENT_PLUGINS_MCP_SCHEMA,
+            "mcpServers": {"example-plugin": {"type": "stdio", "command": "uvx", "args": ["b"]}},
+        })
+        self.assertTrue(any("differs between mcp.json and .mcp.json" in e for e in self.errors_from("validate_agent_plugins_mcp")))
+
+    def test_mcp_is_skipped_without_dot_mcp_json(self) -> None:
+        self.assertEqual([], self.errors_from("validate_agent_plugins_mcp"))
+
+    def test_hooks_accept_supported_event(self) -> None:
+        self.write("com.github.copilot/hooks/hooks.json", self.hooks())
+        self.assertEqual([], self.errors_from("validate_copilot_hooks"))
+
+    def test_hooks_reject_unsupported_event(self) -> None:
+        self.write("com.github.copilot/hooks/hooks.json", self.hooks(event="PostToolUseFailure"))
+        self.assertTrue(any("not supported by VS Code" in e for e in self.errors_from("validate_copilot_hooks")))
+
+    def test_hooks_reject_command_without_plugin_root(self) -> None:
+        self.write("com.github.copilot/hooks/hooks.json", self.hooks(command="bash hooks/scripts/trace.sh"))
+        self.assertTrue(any("must reference ${PLUGIN_ROOT}" in e for e in self.errors_from("validate_copilot_hooks")))
+
+    def test_hooks_reject_missing_script(self) -> None:
+        self.script.unlink()
+        self.write("com.github.copilot/hooks/hooks.json", self.hooks())
+        self.assertTrue(any("missing file" in e for e in self.errors_from("validate_copilot_hooks")))
+
+    def test_missing_copilot_hooks_is_reported(self) -> None:
+        self.write("hooks/hooks.json", self.hooks())
+        self.assertTrue(any("does not read hooks/hooks.json" in e for e in self.errors_from("validate_copilot_hooks")))
+
+    def test_version_consistency_detects_mismatch(self) -> None:
+        self.write("plugin.json", self.manifest(version="1.0.0"))
+        self.write(".claude-plugin/plugin.json", {"name": "example-plugin", "version": "1.0.1"})
+        self.assertTrue(any("version mismatch" in e for e in self.errors_from("validate_version_consistency")))
+
+    def test_version_consistency_accepts_agreement(self) -> None:
+        self.write("plugin.json", self.manifest(version="1.0.0"))
+        self.write(".claude-plugin/plugin.json", {"name": "example-plugin", "version": "1.0.0"})
+        self.write("openclaw.plugin.json", {"name": "example-plugin", "version": "1.0.0"})
+        self.assertEqual([], self.errors_from("validate_version_consistency"))
+
+
+class RepoVsCodeSurfaceTests(unittest.TestCase):
+    plugins = ("alibabacloud-core", "alibabacloud-spec-ops", "alibabacloud-ecs-ops")
+
+    def test_each_plugin_ships_the_vs_code_surface(self) -> None:
+        for name in self.plugins:
+            with self.subTest(plugin=name):
+                plugin_dir = repo_validate.REPO_ROOT / "plugins" / name
+                manifest = json.loads((plugin_dir / "plugin.json").read_text(encoding="utf-8"))
+                self.assertEqual(repo_validate.AGENT_PLUGINS_SCHEMA, manifest["$schema"])
+                self.assertEqual(name, manifest["name"])
+                self.assertTrue((plugin_dir / "mcp.json").is_file())
+                self.assertTrue((plugin_dir / "com.github.copilot/hooks/hooks.json").is_file())
+
+    def test_repo_passes_validation(self) -> None:
+        repo_validate.errors.clear()
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            for name in self.plugins:
+                repo_validate.validate_plugin(repo_validate.REPO_ROOT / "plugins" / name)
+        self.assertEqual([], repo_validate.errors)
 
 
 if __name__ == "__main__":
