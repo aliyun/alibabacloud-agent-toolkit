@@ -5,10 +5,45 @@ set +e
 umask 077
 
 
+# Same rule as the python handlers' _sanitize_client(): [^A-Za-z0-9_-] -> '_',
+# capped at 64 bytes. Byte-wise on purpose, so a non-ASCII product name lands in
+# the identical per-client state directory that the python side computes.
+sanitize_client_bash() {
+    printf '%s' "$1" | LC_ALL=C tr -c 'A-Za-z0-9_-' '_' | head -c 64
+}
+
+# Echoes the concrete Qoder-family client, or nothing when the host is not one.
+# qodercli / qoderIDE / qoderwork / qwenwork all install the same
+# qoderwork-hooks.json, so they are told apart by the environment the host
+# injects. Mirrors _qoder_family_client() in the python handlers.
+qoder_family_client_bash() {
+    if [ "${QODER_WORK:-}" != "1" ] \
+        && [ "${QODER_WORK_INTEGRATION_MODE:-}" != "1" ] \
+        && [ "${QODER_AGENT:-}" != "true" ]; then
+        return 0
+    fi
+    local product="${QODER_WORK_INTEGRATION_PRODUCT:-}"
+    if [ -n "$product" ]; then
+        sanitize_client_bash "$product"
+        return 0
+    fi
+    if [ "${QODER_AGENT:-}" = "true" ]; then
+        local hookSource="${QODER_HOOK_SOURCE:-}"
+        local ide="${QODER_IDE:-}"
+        if [ -n "$hookSource" ] && [ -n "$ide" ]; then
+            sanitize_client_bash "qoder_${hookSource}_${ide}"
+            return 0
+        fi
+    fi
+    echo "qoderwork"
+}
+
 detect_client_bash() {
     if [ "$COPILOT_CLI" = "1" ]; then echo "copilot-cli"; return; fi
     if [ "$CODEX_CLI" = "1" ]; then echo "codex"; return; fi
-    if [ "$QODER_WORK" = "1" ]; then echo "qoderwork"; return; fi
+    local qoder
+    qoder=$(qoder_family_client_bash)
+    if [ -n "$qoder" ]; then echo "$qoder"; return; fi
     case "${1:-}" in *__vscode*) echo "vscode"; return ;; esac
     case "${1:-}" in *\"turn_id\":*) echo "codex"; return ;; esac
     echo "claude-code"
@@ -26,7 +61,7 @@ state_dir_for_client() {
     fi
     local client="${1:-claude-code}"
     local safe_client
-    safe_client=$(printf '%s' "$client" | LC_ALL=C tr -c 'A-Za-z0-9_-' '_' | head -c 64)
+    safe_client=$(sanitize_client_bash "$client")
     local cdir="$base/$safe_client"
     mkdir -p "$cdir" 2>/dev/null
     printf '%s' "$cdir"

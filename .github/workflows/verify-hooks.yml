@@ -24,6 +24,8 @@ jobs:
         run: bash tools/dev-hooks/verify-hooks.sh
       - name: Run sanitize self-tests
         run: python3 plugins/alibabacloud-core/hooks/scripts/lib/sanitize.py
+      - name: Run client detection tests
+        run: bash tools/dev-hooks/test-client-detection.sh
       - name: Run dry-run fixtures
         run: bash tools/dev-hooks/dry-run.sh --all
       - name: Run trace integration tests

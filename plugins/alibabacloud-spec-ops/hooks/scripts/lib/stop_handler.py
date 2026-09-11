@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 import uuid as _uuid
@@ -51,13 +52,48 @@ _EMIT_ORDER = [
 ]
 
 
+def _sanitize_client(name: str) -> str:
+    """Same rule as the bash wrappers' sanitize_client_bash(): [^A-Za-z0-9_-]
+    -> '_', capped at 64. Byte-wise so a non-ASCII product name maps to the
+    identical per-client state directory on both sides."""
+    raw = (name or "").encode("utf-8", "replace")
+    return re.sub(rb"[^A-Za-z0-9_-]", b"_", raw)[:64].decode("ascii")
+
+
+def _qoder_family_client() -> str | None:
+    """Concrete Qoder-family client, or None when the host is not one.
+
+    qodercli / qoderIDE / qoderwork / qwenwork all install the same
+    `qoderwork-hooks.json`, so they are told apart by the environment the
+    host injects: `QODER_WORK_INTEGRATION_PRODUCT` wins (e.g. `qwenworkcn`),
+    then `QODER_AGENT=true` with both `QODER_HOOK_SOURCE` and `QODER_IDE`
+    gives `qoder_<source>_<ide>`, otherwise the legacy default `qoderwork`.
+    """
+    if (
+        os.environ.get("QODER_WORK") != "1"
+        and os.environ.get("QODER_WORK_INTEGRATION_MODE") != "1"
+        and os.environ.get("QODER_AGENT") != "true"
+    ):
+        return None
+    product = os.environ.get("QODER_WORK_INTEGRATION_PRODUCT") or ""
+    if product:
+        return _sanitize_client(product)
+    if os.environ.get("QODER_AGENT") == "true":
+        source = os.environ.get("QODER_HOOK_SOURCE") or ""
+        ide = os.environ.get("QODER_IDE") or ""
+        if source and ide:
+            return _sanitize_client(f"qoder_{source}_{ide}")
+    return "qoderwork"
+
+
 def _detect_client(payload_str: str) -> str:
     if os.environ.get("COPILOT_CLI") == "1":
         return "copilot-cli"
     if os.environ.get("CODEX_CLI") == "1":
         return "codex"
-    if os.environ.get("QODER_WORK") == "1":
-        return "qoderwork"
+    qoder = _qoder_family_client()
+    if qoder:
+        return qoder
     if "__vscode" in payload_str:
         return "vscode"
     if '"turn_id":' in payload_str:
@@ -172,16 +208,9 @@ def _resolve_cdir_for_upload() -> "str | None":
         base = os.path.expanduser(
             "~/.cache/alibabacloud-agent-toolkit/telemetry"
         )
-    client = "unknown"
-    if os.environ.get("COPILOT_CLI") == "1":
-        client = "copilot-cli"
-    elif os.environ.get("CODEX_CLI") == "1":
-        client = "codex"
-    elif os.environ.get("QODER_WORK") == "1":
-        client = "qoderwork"
-    else:
-        client = "claude-code"
-    safe = "".join(c if c.isalnum() or c in "_-" else "_" for c in client)[:64]
+    # Reuse the shared chain so the queue lands in the same bucket as the
+    # --client-name this handler emits.
+    safe = _sanitize_client(_detect_client(""))
     cdir = os.path.join(base, safe)
     try:
         os.makedirs(cdir, exist_ok=True)

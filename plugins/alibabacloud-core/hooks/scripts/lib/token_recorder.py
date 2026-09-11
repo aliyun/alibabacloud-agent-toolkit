@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from functools import partial
 from typing import Any, Iterable, Optional
 
 # Cap how much new transcript we'll process in one Stop pass.
@@ -258,6 +259,7 @@ def _parse_qoderwork(
     start_call_index: int,
     fallback_turn_id: str,
     prev_state: dict,
+    client: str = "qoderwork",
 ) -> tuple[list[dict], dict]:
     """QoderWork transcript schema matches Claude's: each `type:"assistant"`
     JSONL carries `message.usage` with `input_tokens`,
@@ -268,12 +270,15 @@ def _parse_qoderwork(
     still emit the llm_call rows so the viewer shows call timing, count
     and model — token chips just read 0 until QoderWork starts populating
     real usage numbers (no code change needed then).
+
+    `client` defaults to "qoderwork" but the whole Qoder family shares this
+    schema, so callers pass the concrete label (e.g. "qwenworkcn") through.
     """
     rows, new_state = _parse_claude(
         content, start_call_index, fallback_turn_id, prev_state,
     )
     for row in rows:
-        row["client"] = "qoderwork"
+        row["client"] = client
     return rows, new_state
 
 
@@ -294,6 +299,37 @@ PARSERS = {
 }
 
 
+def _is_qoder_family(client: str) -> bool:
+    """True when `client` came out of the Qoder-family detection chain.
+
+    "qoderwork" and "qoder_<source>_<ide>" are recognisable by name, but a
+    host-supplied QODER_WORK_INTEGRATION_PRODUCT (e.g. "qwenworkcn") is not,
+    so fall back to the same environment markers the handlers gate on.
+    """
+    if (client or "").startswith("qoder"):
+        return True
+    return (
+        os.environ.get("QODER_WORK") == "1"
+        or os.environ.get("QODER_WORK_INTEGRATION_MODE") == "1"
+        or os.environ.get("QODER_AGENT") == "true"
+    )
+
+
+def _resolve_parser(client: str):
+    """Parser matching this client's transcript schema.
+
+    The whole Qoder family writes Claude-shaped JSONL, so any family member
+    without its own PARSERS entry is routed through _parse_qoderwork with the
+    real client label bound on rather than dropped into _parse_unknown.
+    """
+    parser = PARSERS.get(client)
+    if parser is not None:
+        return parser
+    if _is_qoder_family(client):
+        return partial(_parse_qoderwork, client=client)
+    return _parse_unknown
+
+
 def process_stop(
     client: str,
     transcript_path: str,
@@ -308,7 +344,7 @@ def process_stop(
     """
     if not transcript_path or not os.path.isfile(transcript_path):
         return [], offset, call_index, parser_state
-    parser = PARSERS.get(client, _parse_unknown)
+    parser = _resolve_parser(client)
     content, new_offset = _read_transcript_slice(transcript_path, offset)
     if not content:
         return [], new_offset, call_index, parser_state

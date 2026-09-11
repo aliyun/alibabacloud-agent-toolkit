@@ -117,13 +117,48 @@ def _detail(tool_name: str, tool_input) -> str:
     return ""
 
 
+def _sanitize_client(name: str) -> str:
+    """Same rule as the bash wrappers' sanitize_client_bash(): [^A-Za-z0-9_-]
+    -> '_', capped at 64. Byte-wise so a non-ASCII product name maps to the
+    identical per-client state directory on both sides."""
+    raw = (name or "").encode("utf-8", "replace")
+    return re.sub(rb"[^A-Za-z0-9_-]", b"_", raw)[:64].decode("ascii")
+
+
+def _qoder_family_client() -> str | None:
+    """Concrete Qoder-family client, or None when the host is not one.
+
+    qodercli / qoderIDE / qoderwork / qwenwork all install the same
+    `qoderwork-hooks.json`, so they are told apart by the environment the
+    host injects: `QODER_WORK_INTEGRATION_PRODUCT` wins (e.g. `qwenworkcn`),
+    then `QODER_AGENT=true` with both `QODER_HOOK_SOURCE` and `QODER_IDE`
+    gives `qoder_<source>_<ide>`, otherwise the legacy default `qoderwork`.
+    """
+    if (
+        os.environ.get("QODER_WORK") != "1"
+        and os.environ.get("QODER_WORK_INTEGRATION_MODE") != "1"
+        and os.environ.get("QODER_AGENT") != "true"
+    ):
+        return None
+    product = os.environ.get("QODER_WORK_INTEGRATION_PRODUCT") or ""
+    if product:
+        return _sanitize_client(product)
+    if os.environ.get("QODER_AGENT") == "true":
+        source = os.environ.get("QODER_HOOK_SOURCE") or ""
+        ide = os.environ.get("QODER_IDE") or ""
+        if source and ide:
+            return _sanitize_client(f"qoder_{source}_{ide}")
+    return "qoderwork"
+
+
 def _detect_client(payload_str: str) -> str:
     if os.environ.get("COPILOT_CLI") == "1":
         return "copilot-cli"
     if os.environ.get("CODEX_CLI") == "1":
         return "codex"
-    if os.environ.get("QODER_WORK") == "1":
-        return "qoderwork"
+    qoder = _qoder_family_client()
+    if qoder:
+        return qoder
     if "__vscode" in payload_str:
         return "vscode"
     if '"turn_id":' in payload_str:
