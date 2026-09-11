@@ -7,7 +7,7 @@ Alibaba Cloud ECS 全生命周期运维管理插件，覆盖实例管理、诊�
 ### One-command install (recommended)
 
 ```bash
-npx openplugin acloudlabs-unofficial/agent-plugins
+npx openplugin aliyun/alibabacloud-agent-toolkit --plugin alibabacloud-ecs-ops
 ```
 
 ### Manual install
@@ -15,15 +15,15 @@ npx openplugin acloudlabs-unofficial/agent-plugins
 #### Claude Code
 
 ```text
-/plugin marketplace add acloudlabs-unofficial/agent-plugins
-/plugin install alibabacloud-ecs-ops@agent-plugins
+/plugin marketplace add aliyun/alibabacloud-agent-toolkit
+/plugin install alibabacloud-ecs-ops@alibabacloud-agent-toolkit
 /reload-plugins
 ```
 
 #### Codex
 
 ```text
-codex plugin marketplace add acloudlabs-unofficial/agent-plugins
+codex plugin marketplace add aliyun/alibabacloud-agent-toolkit
 ```
 
 ## MCP Configuration
