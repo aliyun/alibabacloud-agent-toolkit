@@ -33,7 +33,8 @@ Each step is classified by risk level. Follow these rules strictly:
 
 ## Prerequisites
 
-**Pre-check: Aliyun CLI >= 3.3.3 required**
+### Pre-check: Aliyun CLI >= 3.3.3 required
+
 > Run `aliyun version` to verify >= 3.3.3. If not installed or version too low, run
 > `/bin/bash -c "$(curl -fsSL https://aliyuncli.alicdn.com/setup.sh)"` to install or update.
 
@@ -278,6 +279,7 @@ which is required for the MCP server to authenticate API calls at runtime.
 > must be used verbatim.
 >
 > **Do NOT:**
+>
 > - Attempt to discover or construct an alternative command (e.g. `aliyun auth ...`,
 >   `aliyun ram ...`, `aliyun sts ...`)
 > - Call RAM/STS/IMS APIs to "check" token exchange capability — those APIs serve
@@ -420,6 +422,7 @@ Resolve the QwenWork configuration directory to an absolute path from
 > on PyPI, npm, or as an `aliyun plugin`.
 >
 > **Do NOT:**
+>
 > - Install via `pip` / `uv pip install` (e.g. `alibabacloud-mcp-server` or any
 >   other PyPI package — these are different packages)
 > - Install via `npm install`
