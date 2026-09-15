@@ -139,7 +139,7 @@ def _is_mcpx_executable(invocation: list[str], index: int) -> bool:
     prefix = invocation[:index]
     while prefix and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", prefix[0]):
         prefix = prefix[1:]
-    if prefix and prefix[0] == "env":
+    if prefix and os.path.basename(prefix[0]) == "env":
         prefix = prefix[1:]
         while prefix and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", prefix[0]):
             prefix = prefix[1:]
@@ -148,7 +148,7 @@ def _is_mcpx_executable(invocation: list[str], index: int) -> bool:
         return True
     launcher = os.path.basename(prefix[0])
     if re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", launcher):
-        return len(prefix) == 1
+        return all(re.fullmatch(r"-[bBdEhiIOPqRsSuvVWx]+", arg) for arg in prefix[1:])
     if launcher != "uv" or len(prefix) < 2 or prefix[1] != "run":
         return False
 
@@ -162,6 +162,23 @@ def _is_mcpx_executable(invocation: list[str], index: int) -> bool:
             continue
         return False
     return True
+
+
+def _callcli_args(invocation: list[str], mcpx_index: int) -> list[str] | None:
+    """Validate supported mcpx global options and return CallCLI arguments."""
+    cursor = mcpx_index + 1
+    while cursor < len(invocation):
+        token = invocation[cursor]
+        if token.startswith("--timeout="):
+            cursor += 1
+            continue
+        if token == "--timeout" and cursor + 1 < len(invocation):
+            cursor += 2
+            continue
+        break
+    if invocation[cursor : cursor + 2] != ["call", "CallCLI"]:
+        return None
+    return invocation[cursor + 2 :]
 
 
 def extract_wrapped_callcli(command: str) -> str | None:
@@ -186,22 +203,14 @@ def extract_wrapped_callcli(command: str) -> str | None:
                 or not _is_mcpx_executable(invocation, local_index)
             ):
                 continue
-            try:
-                call_index = invocation.index("call", local_index + 1)
-            except ValueError:
+            callcli_args = _callcli_args(invocation, local_index)
+            if not callcli_args:
                 continue
-            if (
-                call_index + 1 >= len(invocation)
-                or invocation[call_index + 1] != "CallCLI"
-            ):
-                continue
-
-            callcli_args = invocation[call_index + 2 :]
-            direct_command = _json_command(callcli_args)
+            direct_command = _json_command(callcli_args[:1])
             if direct_command:
                 return direct_command
 
-            has_stdin_marker = "-" in callcli_args
+            has_stdin_marker = callcli_args[0] == "-"
             is_piped_from_previous = (
                 segment_index > 0
                 and separators[segment_index - 1] in {"|", "|&"}

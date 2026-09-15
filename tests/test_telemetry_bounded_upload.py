@@ -5,11 +5,11 @@ Validates:
 - Off switch (ALIBABACLOUD_TELEMETRY=false): no upload processes spawned
 - Queue-based enqueue: events written to queue directory correctly
 - Single-instance lock: only one worker processes at a time
-- Bounded concurrency: configurable limits on parallel uploads
+- Bounded batches: configurable limits on sequential uploads per round
 - Hard timeout: uploads killed after timeout, subprocess reaped
 - Finite retry: failed events retried then moved to dead-letter
 - Process cleanup: no orphan processes after worker exits
-- Worker uses fixed venv, not uvx @latest per event
+- Worker resolves the evolving uploader through uvx @latest
 """
 import fcntl
 import io
@@ -218,6 +218,18 @@ class TestWorkerBatchProcessing(unittest.TestCase):
         self.assertEqual(len(remaining), 0)
 
     @mock.patch("telemetry_worker._upload_one")
+    def test_process_batch_respects_configured_batch_size(self, mock_upload):
+        for index in range(5):
+            self._write_event({"event-type": "tool_call", "idx": str(index)})
+
+        with mock.patch.object(telemetry_worker, "DEFAULT_MAX_CONCURRENT", 2):
+            count = telemetry_worker._process_batch(self.tmp)
+
+        self.assertEqual(count, 2)
+        self.assertEqual(mock_upload.call_count, 2)
+        self.assertEqual(len(os.listdir(self.queue_dir)), 3)
+
+    @mock.patch("telemetry_worker._upload_one")
     def test_process_batch_retry_on_failure(self, mock_upload):
         mock_upload.side_effect = RuntimeError("upload failed")
         self._write_event({"event-type": "tool_call"})
@@ -271,6 +283,11 @@ class TestWorkerBatchProcessing(unittest.TestCase):
 
             files = telemetry_worker._list_pending(self.queue_dir)
             self.assertEqual(len(files), 3)
+            retained_indexes = []
+            for filename in files:
+                with open(os.path.join(self.queue_dir, filename)) as f:
+                    retained_indexes.append(json.load(f)["args"]["idx"])
+            self.assertEqual(retained_indexes, ["2", "3", "4"])
         finally:
             telemetry_worker.MAX_QUEUE_SIZE = old_max
 
@@ -372,6 +389,26 @@ class TestUploadTimeout(unittest.TestCase):
         self.assertTrue(proc.stdout.closed)
         self.assertTrue(proc.stderr.closed)
 
+    def test_unexpected_communicate_error_kills_real_child(self):
+        child = subprocess.Popen(
+            ["sleep", "60"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        original_communicate = child.communicate
+        child.communicate = mock.Mock(side_effect=OSError("broken communicate"))
+        try:
+            with mock.patch("telemetry_worker.subprocess.Popen", return_value=child):
+                with self.assertRaises(OSError):
+                    telemetry_worker._upload_one(["ignored"], {})
+            self.assertIsNotNone(child.poll())
+        finally:
+            child.communicate = original_communicate
+            if child.poll() is None:
+                telemetry_worker._kill_process_tree(child)
+
 
 class TestPIDFile(unittest.TestCase):
     """PID file tracks worker process."""
@@ -405,6 +442,29 @@ class TestPIDFile(unittest.TestCase):
         pid_path = telemetry_worker._write_pid_file(self.tmp)
         telemetry_worker._remove_pid_file(pid_path)
         self.assertFalse(os.path.exists(pid_path))
+
+
+class TestWorkerShutdownHandshake(unittest.TestCase):
+    def test_event_queued_during_release_starts_replacement_worker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pending = os.path.join(tmp, "telemetry-queue", "pending")
+            os.makedirs(pending)
+
+            def queue_during_release(_lock_info):
+                with open(os.path.join(pending, "late.json"), "w") as f:
+                    json.dump({"args": {}, "retries": 0}, f)
+
+            with (
+                mock.patch.object(sys, "argv", [telemetry_worker.__file__, tmp]),
+                mock.patch("telemetry_worker._check_existing_worker", return_value=False),
+                mock.patch("telemetry_worker._acquire_lock", return_value=(1, "lock")),
+                mock.patch("telemetry_worker._release_lock", side_effect=queue_during_release),
+                mock.patch("telemetry_worker._process_batch", return_value=0),
+                mock.patch("telemetry_worker.subprocess.Popen") as mock_popen,
+            ):
+                telemetry_worker.main()
+
+            mock_popen.assert_called_once()
 
 
 class TestCleanup(unittest.TestCase):

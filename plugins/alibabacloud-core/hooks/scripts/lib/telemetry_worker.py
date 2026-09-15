@@ -143,13 +143,16 @@ def _upload_one(cmd_prefix, args_dict):
 
     timeout = DEFAULT_HARD_TIMEOUT
 
-    proc = subprocess.Popen(
-        argv,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True,
-    )
+    try:
+        proc = subprocess.Popen(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        raise RuntimeError(f"upload failed to start: {exc}") from exc
 
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
@@ -161,6 +164,10 @@ def _upload_one(cmd_prefix, args_dict):
     except subprocess.TimeoutExpired:
         _kill_process_tree(proc)
         raise RuntimeError(f"upload timed out after {timeout}s")
+    except BaseException:
+        if proc.poll() is None:
+            _kill_process_tree(proc)
+        raise
     finally:
         for stream in (proc.stdout, proc.stderr):
             if stream is not None:
@@ -207,14 +214,15 @@ def _list_pending(queue_dir):
 
     files.sort()
     if len(files) > MAX_QUEUE_SIZE:
-        excess = files[MAX_QUEUE_SIZE:]
+        excess_count = len(files) - MAX_QUEUE_SIZE
+        excess = files[:excess_count]
         for f in excess:
             try:
                 os.unlink(os.path.join(queue_dir, f))
             except OSError:
                 pass
         _log(f"Queue overflow: dropped {len(excess)} oldest events")
-        files = files[:MAX_QUEUE_SIZE]
+        files = files[excess_count:]
     return files
 
 
@@ -224,7 +232,7 @@ def _process_batch(state_dir):
     failed_dir = os.path.join(state_dir, "telemetry-queue", "failed")
     os.makedirs(failed_dir, mode=0o700, exist_ok=True)
 
-    files = _list_pending(queue_dir)
+    files = _list_pending(queue_dir)[:max(1, DEFAULT_MAX_CONCURRENT)]
     if not files:
         return 0
 
@@ -314,6 +322,38 @@ def _cleanup_old(state_dir):
             pass
 
 
+def _has_pending(state_dir):
+    queue_dir = os.path.join(state_dir, "telemetry-queue", "pending")
+    try:
+        with os.scandir(queue_dir) as entries:
+            return any(
+                entry.name.endswith(".json") and not entry.name.endswith(".tmp")
+                for entry in entries
+            )
+    except FileNotFoundError:
+        return False
+
+
+def _start_replacement_worker(state_dir):
+    """Start a successor after releasing the lock when late work exists."""
+    try:
+        subprocess.Popen(
+            [sys.executable, os.path.abspath(__file__), state_dir],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+            env=os.environ.copy(),
+        )
+    except OSError:
+        pass
+
+
+def _raise_shutdown(signum, _frame):
+    raise SystemExit(128 + signum)
+
+
 def main():
     if len(sys.argv) < 2:
         print(f"Usage: {sys.argv[0]} <state-dir> [--cleanup-only]", file=sys.stderr)
@@ -342,6 +382,7 @@ def main():
     if lock_info is None:
         return
 
+    previous_sigterm = signal.signal(signal.SIGTERM, _raise_shutdown)
     pid_path = _write_pid_file(state_dir)
     try:
         if cleanup_only:
@@ -361,6 +402,12 @@ def main():
     finally:
         _remove_pid_file(pid_path)
         _release_lock(lock_info)
+        signal.signal(signal.SIGTERM, previous_sigterm)
+
+    # Close the enqueue-vs-exit race: after the lock and PID are gone, either
+    # this process observes late work or a later enqueuer starts the worker.
+    if _has_pending(state_dir):
+        _start_replacement_worker(state_dir)
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ sys.path.insert(0, str(LIB_DIR))
 
 import post_handler
 import pre_handler
+import sanitize
 
 
 def load_normalization(testcase: unittest.TestCase):
@@ -74,6 +75,23 @@ class ToolNormalizationTests(unittest.TestCase):
             "aliyun sls list-project --region cn-shanghai",
             normalized[1]["command"],
         )
+
+    def test_normalizes_supported_python_launchers(self) -> None:
+        payload = "'{\"command\":\"aliyun ecs DescribeInstances\"}'"
+        for launcher in ("python3 -u", "/usr/bin/env python3"):
+            with self.subTest(launcher=launcher):
+                normalized = self.normalization.normalize_tool_call(
+                    "Bash",
+                    {
+                        "command": (
+                            f"{launcher} scripts/mcpx.py call CallCLI {payload}"
+                        )
+                    },
+                )
+                self.assertEqual(
+                    "mcp__alibabacloud-core__AlibabaCloud___CallCLI",
+                    normalized[0],
+                )
 
     def test_normalizes_multiline_shell_invocation(self) -> None:
         suffix = (
@@ -135,6 +153,9 @@ class ToolNormalizationTests(unittest.TestCase):
             "uv run scripts/mcpx.py '{\"command\":\"aliyun ecs DescribeInstances\"}' call CallCLI",
             "echo scripts/mcpx.py call CallCLI '{\"command\":\"aliyun ecs DescribeInstances\"}'",
             "cat <<'EOF'\nscripts/mcpx.py call CallCLI '{\"command\":\"aliyun ecs DescribeInstances\"}'\nEOF",
+            "python scripts/mcpx.py schema call CallCLI '{\"command\":\"aliyun ecs DescribeInstances\"}'",
+            "scripts/mcpx.py unrelated call CallCLI '{\"command\":\"aliyun ecs DescribeInstances\"}'",
+            "scripts/mcpx.py call CallCLI unrelated '{\"command\":\"aliyun ecs DescribeInstances\"}'",
         ):
             with self.subTest(command=command):
                 self.assert_unchanged(command)
@@ -168,6 +189,36 @@ class ToolNormalizationTests(unittest.TestCase):
             "aliyun ecs DescribeInstances --RegionId cn-hangzhou",
             seed["cli_command"],
         )
+
+    def test_wrapped_callcli_redacts_credential_environment_variables(self) -> None:
+        for variable in (
+            "ALIBABA_CLOUD_ACCESS_KEY_SECRET",
+            "ALIBABA_CLOUD_SECURITY_TOKEN",
+        ):
+            secret = "plainsecretvalue"
+            command = (
+                "uv run scripts/mcpx.py call CallCLI "
+                f"'{{\"command\":\"{variable}={secret} aliyun ecs "
+                "DescribeInstances\"}'"
+            )
+            name, tool_input = post_handler.normalize_tool_call(
+                "Bash", {"command": command}
+            )
+            seed, reason, _ = post_handler.classify_with_reason(name, tool_input)
+            self.assertIsNone(reason)
+            self.assertNotIn(secret, seed["cli_command"])
+            self.assertNotIn(variable, seed["cli_command"])
+
+    def test_direct_aliyun_sanitizer_redacts_credential_environment_variables(self) -> None:
+        secret = "plainsecretvalue"
+        command = (
+            f"ALIBABA_CLOUD_ACCESS_KEY_SECRET={secret} "
+            "aliyun ecs DescribeInstances"
+        )
+        sanitized = sanitize.sanitize_aliyun_cli(command)
+        self.assertNotIn(secret, sanitized)
+        self.assertNotIn("ALIBABA_CLOUD_ACCESS_KEY_SECRET", sanitized)
+        self.assertEqual("aliyun ecs DescribeInstances", sanitized)
 
 
 if __name__ == "__main__":

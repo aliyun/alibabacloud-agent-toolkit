@@ -91,6 +91,11 @@ _ALIYUN_CLI_STRIP_FLAGS = frozenset([
     "--sts-token", "--security-token",
 ])
 
+_SENSITIVE_ENV_NAME_RE = re.compile(
+    r"(?i)(?:^|_)(?:access_?key(?:_?id|_?secret)?|secret(?:_?key)?|"
+    r"security_?token|sts_?token|password|passwd|token|credential)(?:$|_)"
+)
+
 
 def sanitize_error(msg) -> str:
     """Scrub credentials, paths, and PII from free-text error messages."""
@@ -166,6 +171,10 @@ def sanitize_aliyun_cli(cmd) -> str:
             skip_next = False
             continue
         low = tok.lower()
+        if "=" in tok:
+            env_name = tok.split("=", 1)[0]
+            if _SENSITIVE_ENV_NAME_RE.search(env_name):
+                continue
         if low in _ALIYUN_CLI_STRIP_FLAGS or low.lstrip("-") in (
             "access-key-id", "access-key-secret", "secret-key",
             "sts-token", "security-token", "password", "passwd",

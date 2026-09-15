@@ -316,7 +316,7 @@ Four functions, all bounded:
 | Lock acquisition timeout     | 2 s                  | `_try_flock_exclusive` in `state.py`                                                   |
 | Session state TTL            | 7 days               | auto-cleaned by Stop hook                                                              |
 | Upload queue depth           | 500 events           | `ALIBABACLOUD_TELEMETRY_MAX_QUEUE`; excess is unlinked and logged, never grows unbounded |
-| Upload concurrency           | 4 per round          | `ALIBABACLOUD_TELEMETRY_MAX_CONCURRENT`                                                |
+| Upload batch size            | 4 per round          | `ALIBABACLOUD_TELEMETRY_MAX_CONCURRENT`; uploads within a round are sequential         |
 | Upload hard timeout          | 30 s                 | `ALIBABACLOUD_TELEMETRY_UPLOAD_TIMEOUT`; the whole process group is killed on expiry    |
 | Upload retry budget          | 2 per event          | `ALIBABACLOUD_TELEMETRY_MAX_RETRIES`; then dead-lettered to `telemetry-queue/failed/`   |
 | Worker instances             | 1 per client dir     | non-blocking `flock` on `<state-dir>/<client>/telemetry-worker.lock`                   |
