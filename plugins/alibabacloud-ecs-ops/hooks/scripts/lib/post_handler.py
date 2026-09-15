@@ -27,6 +27,7 @@ from state import SessionState  # noqa: E402
 import trace_writer  # noqa: E402
 from tool_normalization import (  # noqa: E402
     ALIYUN_INVOCATION_RE,
+    is_alibabacloud_identifier,
     is_alibabacloud_mcp_tool_name,
     normalize_tool_call,
 )
@@ -111,10 +112,13 @@ def _sanitize_tool_name(tool_name: str) -> str:
 
 
 SKILLS_PATH_RE = re.compile(
-    r"(?P<plugin>alibabacloud[-_a-zA-Z0-9]*)/[^/]*?/?skills/(?P<skill>[^/]+)/(?P<rest>.+)$"
+    r"(?:^|/)(?P<plugin>alibabacloud(?:[-_][A-Za-z0-9]+)*)/"
+    r"(?:[^/]+/)?skills/(?P<skill>[^/]+)/(?P<rest>.+)$"
 )
 SKILL_FILE_RE = re.compile(r"/skills/(?P<skill>[A-Za-z0-9_-]+)/SKILL\.md\b")
-PLUGIN_FROM_PATH_RE = re.compile(r"/(?P<plugin>alibabacloud[-_a-zA-Z0-9]*)/")
+PLUGIN_FROM_PATH_RE = re.compile(
+    r"(?:^|/)(?P<plugin>alibabacloud(?:[-_][A-Za-z0-9]+)*)(?=/)"
+)
 # Skills set ALIBABA_CLOUD_USER_AGENT=AlibabaCloud-Agent-Skills/<skill>[/...]
 # on every aliyun call they emit. Captures the skill name regardless of where
 # in the bash command line it appears (env prefix, `export`, etc.).
@@ -148,7 +152,7 @@ def _path_skill_tag(tool_input: Any) -> Optional[str]:
             continue
         plugin = m.group("plugin") or ""
         skill = m.group("skill") or ""
-        if plugin and skill and PLUGIN_PREFIX in plugin.lower():
+        if plugin and skill:
             return f"{plugin}:{skill}"
     # Case 2: User-Agent based detection on bash commands.
     cmd = tool_input.get("command")
@@ -245,7 +249,7 @@ def classify_with_reason(
         skill = ""
         if isinstance(tool_input, dict):
             skill = tool_input.get("skill", "") or ""
-        if not isinstance(skill, str) or not skill.lower().startswith(PLUGIN_PREFIX):
+        if not is_alibabacloud_identifier(skill):
             return None, "non-alibabacloud-skill", extra
         # Claude/QoderWork pass "<plugin>:<skill>" in the Skill tool input;
         # store skill_name as the bare skill so the viewer's
@@ -265,7 +269,7 @@ def classify_with_reason(
         sub = ""
         if isinstance(tool_input, dict):
             sub = tool_input.get("subagent_type", "") or ""
-        if not isinstance(sub, str) or not sub.lower().startswith(PLUGIN_PREFIX):
+        if not is_alibabacloud_identifier(sub):
             return None, "non-alibabacloud-subagent", extra
         if ":" in sub:
             plugin, _, sub_only = sub.partition(":")
@@ -287,7 +291,7 @@ def classify_with_reason(
                 or tool_input.get("path")
                 or ""
             )
-        if not isinstance(path, str) or PLUGIN_PREFIX not in path.lower():
+        if not isinstance(path, str):
             return None, "read-no-alibabacloud-segment", extra
         m = SKILLS_PATH_RE.search(path.replace("\\", "/"))
         if not m:
@@ -319,7 +323,7 @@ def classify_with_reason(
             if m_skill:
                 m_plugin = PLUGIN_FROM_PATH_RE.search(cmd)
                 plugin = m_plugin.group("plugin") if m_plugin else ""
-                if plugin and PLUGIN_PREFIX in plugin.lower():
+                if plugin:
                     return {
                         "event_type": "skill_invocation",
                         "skill_name": m_skill.group("skill"),

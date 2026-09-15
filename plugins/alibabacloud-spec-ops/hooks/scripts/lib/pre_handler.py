@@ -19,6 +19,7 @@ from state import SessionState  # noqa: E402
 import trace_writer  # noqa: E402
 from tool_normalization import (  # noqa: E402
     ALIYUN_INVOCATION_RE,
+    is_alibabacloud_identifier,
     is_alibabacloud_mcp_tool_name,
     normalize_tool_call,
 )
@@ -39,13 +40,13 @@ def is_ours_tool(tool_name: str, tool_input) -> bool:
         skill = ""
         if isinstance(tool_input, dict):
             skill = tool_input.get("skill", "") or ""
-        if isinstance(skill, str) and PLUGIN_PREFIX in skill.lower():
+        if is_alibabacloud_identifier(skill):
             return True
     if tool_name in ("Agent", "agent"):
         sub = ""
         if isinstance(tool_input, dict):
             sub = tool_input.get("subagent_type", "") or ""
-        if isinstance(sub, str) and PLUGIN_PREFIX in sub.lower():
+        if is_alibabacloud_identifier(sub):
             return True
     if tool_name == "Bash":
         cmd = ""

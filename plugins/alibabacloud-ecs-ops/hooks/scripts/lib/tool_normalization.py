@@ -35,7 +35,12 @@ ALIBABACLOUD_MCP_NAMESPACE_RE = re.compile(
     re.IGNORECASE,
 )
 ALIBABACLOUD_MCP_ACTION_RE = re.compile(
-    r"^(?:mcp__.+__)?AlibabaCloud(?:___(?!_)|_(?!_))[A-Za-z0-9_]+$",
+    r"^AlibabaCloud(?:___(?!_)|_(?!_))[A-Za-z0-9_]+$",
+    re.IGNORECASE,
+)
+ALIBABACLOUD_IDENTIFIER_RE = re.compile(r"^alibabacloud(?:-|:|$)", re.IGNORECASE)
+ALIBABACLOUD_SKILLS_PATH_RE = re.compile(
+    r"(?:^|/)alibabacloud(?:[-_][A-Za-z0-9]+)*/(?:[^/]+/)?skills/",
     re.IGNORECASE,
 )
 
@@ -50,19 +55,28 @@ def is_alibabacloud_mcp_tool_name(tool_name: str) -> bool:
     )
 
 
+def is_alibabacloud_identifier(value: str) -> bool:
+    """Match plugin/skill identifiers with a delimiter after the owner name."""
+    return isinstance(value, str) and bool(ALIBABACLOUD_IDENTIFIER_RE.match(value))
+
+
+def is_alibabacloud_skill_path(value: str) -> bool:
+    """Match a complete Alibaba Cloud plugin path segment before ``skills``."""
+    if not isinstance(value, str):
+        return False
+    return bool(ALIBABACLOUD_SKILLS_PATH_RE.search(value.replace("\\", "/")))
+
+
 def _is_alibabacloud_inner_tool(tool_name: str, tool_input: dict[str, Any]) -> bool:
     """Recognize our tools without depending on a client's private wrapper name."""
     if is_alibabacloud_mcp_tool_name(tool_name):
         return True
     if tool_name in {"Skill", "skill"}:
         skill = tool_input.get("skill") or ""
-        return isinstance(skill, str) and skill.lower().startswith("alibabacloud")
+        return is_alibabacloud_identifier(skill)
     if tool_name in {"Agent", "agent"}:
         subagent = tool_input.get("subagent_type") or ""
-        return (
-            isinstance(subagent, str)
-            and subagent.lower().startswith("alibabacloud")
-        )
+        return is_alibabacloud_identifier(subagent)
     if tool_name in {"Read", "view", "read_file"}:
         path = (
             tool_input.get("file_path")
@@ -70,22 +84,14 @@ def _is_alibabacloud_inner_tool(tool_name: str, tool_input: dict[str, Any]) -> b
             or tool_input.get("path")
             or ""
         )
-        return (
-            isinstance(path, str)
-            and "alibabacloud" in path.lower()
-            and "/skills/" in path.replace("\\", "/").lower()
-        )
+        return is_alibabacloud_skill_path(path)
     if tool_name == "Bash":
         command = tool_input.get("command") or ""
         if not isinstance(command, str):
             return False
-        normalized_command = command.replace("\\", "/")
         return bool(
             ALIYUN_INVOCATION_RE.search(command)
-            or (
-                "alibabacloud" in normalized_command.lower()
-                and "/skills/" in normalized_command.lower()
-            )
+            or is_alibabacloud_skill_path(command)
         )
     return False
 

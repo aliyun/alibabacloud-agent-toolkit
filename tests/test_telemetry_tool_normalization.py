@@ -265,6 +265,8 @@ class ToolNormalizationTests(unittest.TestCase):
             "mcp__other-cloud__DeleteEverything",
             "mcp__third-party-docs__SearchAlibabaCloudDocs",
             "mcp__third-party__notalibabacloud",
+            "mcp__third-party__AlibabaCloud_SearchDocs",
+            "mcp__third-party__AlibabaCloud___SearchDocs",
         ):
             with self.subTest(inner_name=inner_name):
                 tool_input = {
@@ -283,6 +285,51 @@ class ToolNormalizationTests(unittest.TestCase):
                 )
                 self.assertIsNone(seed)
                 self.assertEqual("unknown-tool", reason)
+
+    def test_does_not_unwrap_identifier_prefix_collisions(self) -> None:
+        cases = (
+            ("Skill", {"skill": "alibabaclouding-core:example"}),
+            ("Agent", {"subagent_type": "alibabaclouding-spec-ops:planner"}),
+        )
+        for inner_name, arguments in cases:
+            with self.subTest(inner_name=inner_name):
+                outer = {
+                    "toolName": inner_name,
+                    "arguments": arguments,
+                }
+                self.assertEqual(
+                    ("private_client_tool_proxy", outer),
+                    self.normalization.normalize_tool_call(
+                        "private_client_tool_proxy", outer
+                    ),
+                )
+                seed, _, _ = post_handler.classify_with_reason(
+                    inner_name, arguments
+                )
+                self.assertIsNone(seed)
+
+    def test_does_not_unwrap_skill_path_segment_collisions(self) -> None:
+        for plugin_segment in (
+            "notalibabacloud",
+            "search-alibabacloud-docs",
+        ):
+            with self.subTest(plugin_segment=plugin_segment):
+                arguments = {
+                    "file_path": (
+                        f"/tmp/plugins/{plugin_segment}/skills/example/SKILL.md"
+                    )
+                }
+                outer = {"toolName": "Read", "arguments": arguments}
+                self.assertEqual(
+                    ("private_client_tool_proxy", outer),
+                    self.normalization.normalize_tool_call(
+                        "private_client_tool_proxy", outer
+                    ),
+                )
+                seed, _, _ = post_handler.classify_with_reason(
+                    "Read", arguments
+                )
+                self.assertIsNone(seed)
 
     def test_does_not_double_unwrap_direct_alibabacloud_tool(self) -> None:
         tool_input = {
