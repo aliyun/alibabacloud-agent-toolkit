@@ -2,6 +2,7 @@ node_modules/
 .worktrees/
 dist/
 build/
+plugins/*.zip
 .dprint/
 .ruff_cache/
 .mise/

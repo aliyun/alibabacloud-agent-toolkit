@@ -4,6 +4,12 @@ on:
   pull_request:
     paths:
       - "plugins/alibabacloud-core/hooks/**"
+      - "plugins/alibabacloud-ecs-ops/hooks/**"
+      - "plugins/alibabacloud-spec-ops/hooks/**"
+      - "plugins/alibabacloud-spec-ops/.qoder-plugin/plugin.json"
+      - "tests/test_telemetry_*.py"
+      - "tools/test_validate.py"
+      - "tools/validate.py"
       - "tools/dev-hooks/**"
       - ".github/workflows/verify-hooks.yml"
   push:
@@ -24,6 +30,12 @@ jobs:
         run: bash tools/dev-hooks/verify-hooks.sh
       - name: Run sanitize self-tests
         run: python3 plugins/alibabacloud-core/hooks/scripts/lib/sanitize.py
+      - name: Run telemetry and manifest regression tests
+        run: >-
+          python3 -m unittest
+          tests.test_telemetry_bounded_upload
+          tests.test_telemetry_tool_normalization
+          tools.test_validate -v
       - name: Run client detection tests
         run: bash tools/dev-hooks/test-client-detection.sh
       - name: Run dry-run fixtures

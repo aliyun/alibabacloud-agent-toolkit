@@ -44,7 +44,7 @@ note_fail() {
 reset_client_env() {
     unset COPILOT_CLI CODEX_CLI VSCODE_AGENT \
         QODER_WORK QODER_WORK_INTEGRATION_MODE QODER_WORK_INTEGRATION_PRODUCT \
-        QODER_AGENT QODER_HOOK_SOURCE QODER_IDE
+        QODER_PRODUCT_ID QODER_AGENT QODER_HOOK_SOURCE QODER_IDE VSCODE_BRAND
 }
 
 # --- 1. the four wrappers must carry an identical detection block -----------
@@ -165,11 +165,24 @@ check_case "vscode marker value not 1"    "claude-code"  VSCODE_AGENT=true
 check_case "QODER_WORK=1 only"            "qoderwork"    QODER_WORK=1
 check_case "integration mode only"        "qoderwork"    QODER_WORK_INTEGRATION_MODE=1
 
+# New Qoder exposes QODER_PRODUCT_ID to plugin processes; Qoder IDE exposes
+# VSCODE_BRAND. Both are more specific than the generic QODER_WORK=1 marker
+# injected by qoderwork-hooks.json.
+check_case "new qoder product id"         "qoder"        QODER_WORK=1 QODER_PRODUCT_ID=qoder
+check_case "new qoder cn product id"      "qoder"        QODER_WORK=1 QODER_PRODUCT_ID=qoder-cn
+check_case "new qoder mixed-case id"      "qoder"        QODER_WORK=1 QODER_PRODUCT_ID=Qoder-CN
+check_case "qoder id with whitespace"     "qoderwork"    QODER_WORK=1 "QODER_PRODUCT_ID= qoder "
+check_case "qoder ide vscode brand"       "qoder"        QODER_WORK=1 VSCODE_BRAND=Qoder
+check_case "qoder ide brand alone"        "qoder"        VSCODE_BRAND=Qoder
+check_case "qoder brand with whitespace"  "qoderwork"    QODER_WORK=1 "VSCODE_BRAND= Qoder "
+
 # QODER_WORK_INTEGRATION_PRODUCT names the concrete product.
 check_case "product qwenworkcn"           "qwenworkcn" \
     QODER_WORK=1 QODER_WORK_INTEGRATION_MODE=1 QODER_WORK_INTEGRATION_PRODUCT=qwenworkcn
 check_case "product wins over agent"      "qwenworkcn" \
     QODER_AGENT=true QODER_HOOK_SOURCE=cli QODER_IDE=0 QODER_WORK_INTEGRATION_PRODUCT=qwenworkcn
+check_case "product wins over qoder id"   "qwenworkcn" \
+    QODER_WORK=1 QODER_PRODUCT_ID=qoder QODER_WORK_INTEGRATION_PRODUCT=qwenworkcn
 check_case "empty product falls through"  "qoderwork" \
     QODER_WORK=1 QODER_WORK_INTEGRATION_PRODUCT=
 check_case "qoder beats vscode payload"   "qoderwork" \
@@ -242,7 +255,8 @@ with os.fdopen(fd, "w") as handle:
 
 QODER_KEYS = (
     "QODER_WORK", "QODER_WORK_INTEGRATION_MODE", "QODER_WORK_INTEGRATION_PRODUCT",
-    "QODER_AGENT", "QODER_HOOK_SOURCE", "QODER_IDE",
+    "QODER_PRODUCT_ID", "QODER_AGENT", "QODER_HOOK_SOURCE", "QODER_IDE",
+    "VSCODE_BRAND",
 )
 
 
@@ -256,6 +270,8 @@ def rows_for(client, env):
 
 cases = [
     ("qoderwork", {"QODER_WORK": "1"}, 1, "qoderwork"),
+    ("qoder", {"QODER_WORK": "1", "QODER_PRODUCT_ID": "qoder"}, 1, "qoder"),
+    ("qoder", {"QODER_WORK": "1", "VSCODE_BRAND": "Qoder"}, 1, "qoder"),
     ("qwenworkcn", {
         "QODER_WORK": "1",
         "QODER_WORK_INTEGRATION_MODE": "1",
@@ -415,6 +431,8 @@ e2e_case "no client env"        "claude-code"
 # has to land in one vscode/ bucket instead of the claude-code default.
 e2e_case "vscode agent marker"  "vscode"      VSCODE_AGENT=1
 e2e_case "legacy qoderwork"     "qoderwork"   QODER_WORK=1
+e2e_case "new qoder product id" "qoder"       QODER_WORK=1 QODER_PRODUCT_ID=qoder
+e2e_case "qoder ide brand"      "qoder"       QODER_WORK=1 VSCODE_BRAND=Qoder
 e2e_case "qwenworkcn product"   "qwenworkcn" \
     QODER_WORK=1 QODER_WORK_INTEGRATION_MODE=1 QODER_WORK_INTEGRATION_PRODUCT=qwenworkcn
 e2e_case "qoder agent cli"      "qoder_cli_0" \

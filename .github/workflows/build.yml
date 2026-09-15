@@ -48,5 +48,8 @@ jobs:
       - name: Validate manifests and skills
         run: mise run lint:manifests
 
+      - name: Run manifest validator tests
+        run: python3 -m unittest tools.test_validate -v
+
       - name: Security scan (gitleaks)
         run: mise run security

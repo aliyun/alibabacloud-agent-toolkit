@@ -17,39 +17,13 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from state import SessionState  # noqa: E402
 import trace_writer  # noqa: E402
+from tool_normalization import (  # noqa: E402
+    ALIYUN_INVOCATION_RE,
+    normalize_tool_call,
+)
 
 PLUGIN_PREFIX = "alibabacloud"
 STDIN_CAP = 65536
-QODERWORK_MCP_WRAPPERS = ("qw_mcp_call", "qw_mcp_get", "CallMcpTool")
-
-# Aliyun CLI invocation: matches `aliyun ...` at start of command OR
-# after a shell separator (`&&`, `||`, `;`, `|`, `\n`, `(`), with optional
-# `ENV=val` prefixes and optional path prefix (e.g. `/usr/local/bin/aliyun`).
-# Word-bounded (excludes `aliyun-cli`, `myaliyun`, `cat /var/log/aliyun.log`).
-# Kept in sync with post_handler.ALIYUN_INVOCATION_RE.
-ALIYUN_INVOCATION_RE = re.compile(
-    r"(?:^|[;&|\n(])"
-    r"\s*"
-    r"(?:[A-Z][A-Z0-9_]*=\S+\s+)*"
-    r"(?:[^\s;&|]*/)?"
-    r"aliyun"
-    r"(?=\s|$|[;&|])"
-)
-
-
-def normalize_tool_call(tool_name: str, tool_input):
-    """Unwrap QoderWork MCP wrapper payloads into the inner MCP tool shape."""
-    if tool_name not in QODERWORK_MCP_WRAPPERS or not isinstance(tool_input, dict):
-        return tool_name, tool_input
-    inner_name = tool_input.get("toolName") or tool_input.get("tool_name") or ""
-    if not isinstance(inner_name, str) or not inner_name:
-        return tool_name, tool_input
-    inner_input = tool_input.get("arguments")
-    if not isinstance(inner_input, dict):
-        inner_input = {}
-    return inner_name, inner_input
-
-
 def read_stdin_bounded() -> bytes:
     return sys.stdin.buffer.read(STDIN_CAP)
 
@@ -130,25 +104,30 @@ def _qoder_family_client() -> str | None:
 
     qodercli / qoderIDE / qoderwork / qwenwork all install the same
     `qoderwork-hooks.json`, so they are told apart by the environment the
-    host injects: `QODER_WORK_INTEGRATION_PRODUCT` wins (e.g. `qwenworkcn`),
-    then `QODER_AGENT=true` with both `QODER_HOOK_SOURCE` and `QODER_IDE`
-    gives `qoder_<source>_<ide>`, otherwise the legacy default `qoderwork`.
+    host injects. Explicit Work product names win, New Qoder reports
+    `QODER_PRODUCT_ID=qoder`, Qoder IDE reports `VSCODE_BRAND=Qoder`, and
+    generic Work markers retain the legacy `qoderwork` default.
     """
-    if (
-        os.environ.get("QODER_WORK") != "1"
-        and os.environ.get("QODER_WORK_INTEGRATION_MODE") != "1"
-        and os.environ.get("QODER_AGENT") != "true"
-    ):
-        return None
     product = os.environ.get("QODER_WORK_INTEGRATION_PRODUCT") or ""
     if product:
         return _sanitize_client(product)
+    product_id = (os.environ.get("QODER_PRODUCT_ID") or "").lower()
+    if product_id in {"qoder", "qoder-cn"}:
+        return "qoder"
+    if (os.environ.get("VSCODE_BRAND") or "").lower() == "qoder":
+        return "qoder"
     if os.environ.get("QODER_AGENT") == "true":
         source = os.environ.get("QODER_HOOK_SOURCE") or ""
         ide = os.environ.get("QODER_IDE") or ""
         if source and ide:
             return _sanitize_client(f"qoder_{source}_{ide}")
-    return "qoderwork"
+    if (
+        os.environ.get("QODER_WORK") == "1"
+        or os.environ.get("QODER_WORK_INTEGRATION_MODE") == "1"
+        or os.environ.get("QODER_AGENT") == "true"
+    ):
+        return "qoderwork"
+    return None
 
 
 def _detect_client(payload_str: str) -> str:

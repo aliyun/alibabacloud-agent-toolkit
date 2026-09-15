@@ -40,6 +40,7 @@ required=(
     "scripts/lib/sanitize.py"
     "scripts/lib/state.py"
     "scripts/lib/token_recorder.py"
+    "scripts/lib/tool_normalization.py"
     "scripts/lib/trace_writer.py"
 )
 for f in "${required[@]}"; do

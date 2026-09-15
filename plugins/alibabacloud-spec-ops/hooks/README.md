@@ -21,7 +21,7 @@ Anonymized usage telemetry shared by all `alibabacloud-*` plugins in this
 repository. Captures per-call hook events from agent clients (Claude Code,
 Codex CLI, VS Code, and the Qoder family; Copilot CLI remains a Phase 2 stub),
 queues each event as a file on disk, and lets one bounded background worker
-upload them with the pinned `alibabacloud.mcp-proxy==0.5.1 plugin-telemetry`
+upload them with the evolving `alibabacloud.mcp-proxy@latest plugin-telemetry`
 CLI.
 
 Per-client event coverage:
@@ -61,34 +61,30 @@ backup is written next to the settings file on every run.
 
 `QODER_WORK=1` only says "some Qoder-family host". Hosts that know their own
 product additionally inject `QODER_WORK_INTEGRATION_MODE`,
-`QODER_WORK_INTEGRATION_PRODUCT`, `QODER_AGENT`, `QODER_HOOK_SOURCE` and
-`QODER_IDE`, which the hook scripts use to report the concrete client instead
-of the generic `qoderwork`. See [Client detection](#client-detection).
+`QODER_WORK_INTEGRATION_PRODUCT`, `QODER_PRODUCT_ID`, `VSCODE_BRAND`,
+`QODER_AGENT`, `QODER_HOOK_SOURCE` and `QODER_IDE`, which the hook scripts
+use to report the concrete client instead of the generic `qoderwork`. See
+[Client detection](#client-detection).
 
 ## Prerequisites
 
-The worker builds a reusable virtualenv with the Python standard library and
-installs the pinned uploader into it, so `python3` with a working `venv` and
-`pip` is all that is required:
+The hook handlers and queue worker require `python3`. Uploads are resolved by
+`uvx`, so `uv` must also be installed and available on `PATH`:
 
 ```bash
 # Verify
-python3 -c 'import venv; print("venv ok")'
-python3 -m pip --version
+python3 --version
+uvx --version
 ```
 
-The virtualenv is created once per client directory at
-`<state-dir>/<client>/.venv`, holds `alibabacloud.mcp-proxy==0.5.1`, and is
-reused for every later event — a version marker file skips recreation.
-
-`uv` is optional. It is only used as a fallback when the virtualenv cannot be
-created or the install fails, and then still with a pinned version:
+Verify that the current MCP proxy exposes the telemetry subcommand through its
+default executable:
 
 ```bash
-uvx --from alibabacloud.mcp-proxy==0.5.1 plugin-telemetry --help
+uvx alibabacloud.mcp-proxy@latest plugin-telemetry --help
 ```
 
-If neither path works, nothing is lost inline: the event file stays in
+If uploader resolution fails, nothing is lost inline: the event file stays in
 `pending/`, is retried up to the retry budget, then dead-lettered into
 `failed/`. The agent is never blocked either way.
 
@@ -130,10 +126,10 @@ allowlist defined in `telemetry_design.md` — only those fields are ever sent.
 Each hook fire writes one JSON file into
 `<state-dir>/<client>/telemetry-queue/pending/` and returns immediately. The
 single background worker later turns each queued event into one invocation of
-the pinned uploader, so the agent never waits:
+the uploader, so the agent never waits:
 
 ```
-<state-dir>/<client>/.venv/bin/plugin-telemetry \
+uvx alibabacloud.mcp-proxy@latest plugin-telemetry \
     --client-name <claude-code|codex|vscode|copilot-cli|qoderwork|qwenworkcn|qoder_cli_0|…> \
     --event-type <skill_invocation|subagent_dispatch|reference_file_read|cli_command_use|mcp_tool_use> \
     --start-timestamp <ISO8601> \
@@ -166,7 +162,7 @@ export ALIBABACLOUD_TELEMETRY=false
 | `ALIBABACLOUD_TELEMETRY_MAX_CONCURRENT` | `4`                                              | Upload batch size the worker drains per round                                                                                    |
 | `ALIBABACLOUD_TELEMETRY_UPLOAD_TIMEOUT` | `30`                                               | Hard per-upload timeout in seconds; the uploader's whole process group is killed when it expires                                 |
 | `ALIBABACLOUD_TELEMETRY_MAX_RETRIES` | `2`                                                   | Retry budget per event. Once exhausted the event is dead-lettered into `telemetry-queue/failed/`                                  |
-| `ALIBABACLOUD_TELEMETRY_UPLOADER`   | unset                                                  | Override the uploader argv prefix (test hook). When unset the worker uses `<state-dir>/<client>/.venv/bin/plugin-telemetry`     |
+| `ALIBABACLOUD_TELEMETRY_UPLOADER`   | unset                                                  | Override the uploader argv prefix (test hook). When unset the worker uses `uvx alibabacloud.mcp-proxy@latest plugin-telemetry` |
 | `ALIBABACLOUD_TELEMETRY_WORKER_DEBUG` | `0`                                                  | When `1`, the worker appends progress lines to `<state-dir>/<client>/worker-debug.log`                                            |
 | `ALIBABACLOUD_TELEMETRY_WORKER_STATE_DIR` | unset                                            | Client directory the worker drains. Set automatically by `telemetry_enqueue.py`; not meant to be exported by hand                |
 | `COPILOT_CLI`                       | unset                                                  | Set to `1` to declare the Copilot CLI client (Phase 2 stub)                                                                     |
@@ -175,6 +171,8 @@ export ALIBABACLOUD_TELEMETRY=false
 | `QODER_WORK`                        | unset                                                  | Set to `1` to declare a Qoder-family client. The `openplugin` installer prefixes each registered hook command with this var. Yields `qoderwork` unless one of the vars below narrows it down. |
 | `QODER_WORK_INTEGRATION_MODE`       | unset                                                  | Set to `1` by Qoder-family hosts running in integration mode. On its own it still resolves to `qoderwork`. |
 | `QODER_WORK_INTEGRATION_PRODUCT`    | unset                                                  | Highest-priority Qoder-family marker: when non-empty its value becomes the client name verbatim (sanitized), e.g. `qwenworkcn`. |
+| `QODER_PRODUCT_ID`                  | unset                                                  | New Qoder sets `qoder` or `qoder-cn`; both resolve to the stable client name `qoder`. |
+| `VSCODE_BRAND`                      | unset                                                  | Qoder IDE sets `Qoder`; this resolves to `qoder` even though the shared hook command also sets `QODER_WORK=1`. |
 | `QODER_AGENT`                       | unset                                                  | Set to `true` by qodercli / qoderIDE. Combined with the two vars below it resolves to `qoder_<QODER_HOOK_SOURCE>_<QODER_IDE>`. |
 | `QODER_HOOK_SOURCE`                 | unset                                                  | Hook origin reported by a `QODER_AGENT=true` host, e.g. `cli`. Required together with `QODER_IDE`; if either is missing the client falls back to `qoderwork`. |
 | `QODER_IDE`                         | unset                                                  | IDE/workspace discriminator reported by a `QODER_AGENT=true` host, e.g. `0`. Required together with `QODER_HOOK_SOURCE`. |
@@ -284,6 +282,17 @@ Each family is searched at the top level then nested under `data` / `body`
 / `error` / `result`. If neither family yields a value, the field is
 omitted (we never generate a caller-side UUID).
 
+### Tool normalization (`lib/tool_normalization.py`)
+
+Pre- and post-tool handlers share one normalization layer. Native Qoder-family
+wrappers (`qw_mcp_call`, `qw_mcp_get`, `CallMcpTool`, and New Qoder's
+`mcp_call`) are unwrapped into their inner MCP tool and arguments. A Bash
+command that invokes `mcpx.py call
+CallCLI` with a JSON request containing an `aliyun` command is normalized to
+`AlibabaCloud___CallCLI`; this covers connector-based QwenWork calls while
+preserving native MCP and direct Bash behavior. Parsing uses only `shlex` and
+`json` and never evaluates shell input.
+
 ### Sanitization (`lib/sanitize.py`)
 
 Four functions, all bounded:
@@ -311,7 +320,7 @@ Four functions, all bounded:
 | Lock acquisition timeout     | 2 s                  | `_try_flock_exclusive` in `state.py`                                                   |
 | Session state TTL            | 7 days               | auto-cleaned by Stop hook                                                              |
 | Upload queue depth           | 500 events           | `ALIBABACLOUD_TELEMETRY_MAX_QUEUE`; excess is unlinked and logged, never grows unbounded |
-| Upload concurrency           | 4 per round          | `ALIBABACLOUD_TELEMETRY_MAX_CONCURRENT`                                                |
+| Upload batch size            | 4 per round          | `ALIBABACLOUD_TELEMETRY_MAX_CONCURRENT`; uploads within a round are sequential         |
 | Upload hard timeout          | 30 s                 | `ALIBABACLOUD_TELEMETRY_UPLOAD_TIMEOUT`; the whole process group is killed on expiry    |
 | Upload retry budget          | 2 per event          | `ALIBABACLOUD_TELEMETRY_MAX_RETRIES`; then dead-lettered to `telemetry-queue/failed/`   |
 | Worker instances             | 1 per client dir     | non-blocking `flock` on `<state-dir>/<client>/telemetry-worker.lock`                   |
@@ -328,12 +337,12 @@ success immediately.
 `lib/telemetry_worker.py` is that worker. It holds an exclusive `flock` on
 `<state-dir>/<client>/telemetry-worker.lock`, so at most one worker runs per
 client directory; a second start attempt exits quietly instead of piling up.
-It uploads through a fixed virtualenv holding the pinned
-`alibabacloud.mcp-proxy==0.5.1`, created once and reused — no per-event
-`uvx @latest` resolution, and therefore no per-event UV cache growth. Each
-upload runs in its own process group with a hard timeout and is reaped with
-`killpg`, retries are bounded, and an event that exhausts them moves to
-`telemetry-queue/failed/` as a dead letter rather than being retried forever.
+It uploads through `uvx alibabacloud.mcp-proxy@latest plugin-telemetry`, using
+uv's normal package cache while allowing the independently released proxy to
+evolve. Each upload runs in its own process group with a hard timeout and is
+reaped with `killpg`, retries are bounded, and an event that exhausts them
+moves to `telemetry-queue/failed/` as a dead letter rather than being retried
+forever.
 
 This replaced the previous fire-and-forget pattern:
 
@@ -360,7 +369,6 @@ multi-client operation:
 │   ├── debug.log                      # client-scoped diagnostic log
 │   ├── worker-debug.log               # worker progress (ALIBABACLOUD_TELEMETRY_WORKER_DEBUG)
 │   ├── telemetry-worker.lock          # flock — guarantees one worker per client dir
-│   ├── .venv/                         # pinned uploader venv (alibabacloud.mcp-proxy==0.5.1)
 │   ├── telemetry-queue/               # bounded upload queue, 0700
 │   │   ├── pending/                   # events awaiting upload
 │   │   │   └── <usec>-<rand8>.json    # {"args": {...}, "retries": N, "timestamp": T}
@@ -570,11 +578,13 @@ the environment the host injects:
 
 1. `QODER_WORK_INTEGRATION_PRODUCT` non-empty → that value, e.g. `qwenworkcn`
    for 千问办公中国版
-2. else `QODER_AGENT=true` with both `QODER_HOOK_SOURCE` and `QODER_IDE`
+2. else `QODER_PRODUCT_ID=qoder|qoder-cn` → `qoder` for New Qoder
+3. else `VSCODE_BRAND=Qoder` → `qoder` for Qoder IDE
+4. else `QODER_AGENT=true` with both `QODER_HOOK_SOURCE` and `QODER_IDE`
    non-empty → `qoder_<QODER_HOOK_SOURCE>_<QODER_IDE>`, e.g. `qoder_cli_0`
-3. else → `qoderwork`, the legacy default that `QODER_WORK=1` alone yields
+5. else → `qoderwork`, the legacy default that `QODER_WORK=1` alone yields
 
-Step 3 is only entered when at least one of `QODER_WORK=1`,
+Step 5 is only entered when at least one of `QODER_WORK=1`,
 `QODER_WORK_INTEGRATION_MODE=1` or `QODER_AGENT=true` is set, so a plain Claude
 Code session still falls through to `claude-code`.
 

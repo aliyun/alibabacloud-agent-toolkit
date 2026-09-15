@@ -25,12 +25,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sanitize  # noqa: E402
 from state import SessionState  # noqa: E402
 import trace_writer  # noqa: E402
+from tool_normalization import (  # noqa: E402
+    ALIYUN_INVOCATION_RE,
+    normalize_tool_call,
+)
 
 PLUGIN_PREFIX = "alibabacloud"
 STDIN_CAP = 10 * 1024 * 1024  # 10 MB — full response bodies can legitimately exceed 64 KB
 JSON_PARSE_WINDOW = 16384
 ERROR_REGEX_WINDOW = 500
-QODERWORK_MCP_WRAPPERS = ("qw_mcp_call", "qw_mcp_get", "CallMcpTool")
 
 
 def _sanitize_client(name: str) -> str:
@@ -46,25 +49,30 @@ def _qoder_family_client() -> str | None:
 
     qodercli / qoderIDE / qoderwork / qwenwork all install the same
     `qoderwork-hooks.json`, so they are told apart by the environment the
-    host injects: `QODER_WORK_INTEGRATION_PRODUCT` wins (e.g. `qwenworkcn`),
-    then `QODER_AGENT=true` with both `QODER_HOOK_SOURCE` and `QODER_IDE`
-    gives `qoder_<source>_<ide>`, otherwise the legacy default `qoderwork`.
+    host injects. Explicit Work product names win, New Qoder reports
+    `QODER_PRODUCT_ID=qoder`, Qoder IDE reports `VSCODE_BRAND=Qoder`, and
+    generic Work markers retain the legacy `qoderwork` default.
     """
-    if (
-        os.environ.get("QODER_WORK") != "1"
-        and os.environ.get("QODER_WORK_INTEGRATION_MODE") != "1"
-        and os.environ.get("QODER_AGENT") != "true"
-    ):
-        return None
     product = os.environ.get("QODER_WORK_INTEGRATION_PRODUCT") or ""
     if product:
         return _sanitize_client(product)
+    product_id = (os.environ.get("QODER_PRODUCT_ID") or "").lower()
+    if product_id in {"qoder", "qoder-cn"}:
+        return "qoder"
+    if (os.environ.get("VSCODE_BRAND") or "").lower() == "qoder":
+        return "qoder"
     if os.environ.get("QODER_AGENT") == "true":
         source = os.environ.get("QODER_HOOK_SOURCE") or ""
         ide = os.environ.get("QODER_IDE") or ""
         if source and ide:
             return _sanitize_client(f"qoder_{source}_{ide}")
-    return "qoderwork"
+    if (
+        os.environ.get("QODER_WORK") == "1"
+        or os.environ.get("QODER_WORK_INTEGRATION_MODE") == "1"
+        or os.environ.get("QODER_AGENT") == "true"
+    ):
+        return "qoderwork"
+    return None
 
 
 def detect_client(payload_str: str) -> str:
@@ -99,19 +107,6 @@ def iso_from_ms(ms: int) -> str:
 
 def _sanitize_tool_name(tool_name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]", "_", tool_name or "")[:120]
-
-
-def normalize_tool_call(tool_name: str, tool_input: Any) -> tuple[str, Any]:
-    """Unwrap QoderWork MCP wrapper payloads into the inner MCP tool shape."""
-    if tool_name not in QODERWORK_MCP_WRAPPERS or not isinstance(tool_input, dict):
-        return tool_name, tool_input
-    inner_name = tool_input.get("toolName") or tool_input.get("tool_name") or ""
-    if not isinstance(inner_name, str) or not inner_name:
-        return tool_name, tool_input
-    inner_input = tool_input.get("arguments")
-    if not isinstance(inner_input, dict):
-        inner_input = {}
-    return inner_name, inner_input
 
 
 SKILLS_PATH_RE = re.compile(
@@ -229,21 +224,6 @@ def _cloud_api_meta(
     if request_id:
         out["request_id"] = request_id
     return out or None
-
-# Aliyun CLI invocation: matches `aliyun ...` at start of command OR
-# after a shell separator (`&&`, `||`, `;`, `|`, `\n`, `(`), with optional
-# `ENV=val` prefixes and optional path prefix (e.g. `/usr/local/bin/aliyun`).
-# Word-bounded (excludes `aliyun-cli`, `myaliyun`, `cat /var/log/aliyun.log`).
-# Kept in sync with pre_handler.ALIYUN_INVOCATION_RE.
-ALIYUN_INVOCATION_RE = re.compile(
-    r"(?:^|[;&|\n(])"
-    r"\s*"
-    r"(?:[A-Z][A-Z0-9_]*=\S+\s+)*"
-    r"(?:[^\s;&|]*/)?"
-    r"aliyun"
-    r"(?=\s|$|[;&|])"
-)
-
 
 def classify_with_reason(
     tool_name: str, tool_input: Any
@@ -363,9 +343,9 @@ def classify_with_reason(
     lowered = tool_name.lower()
     if PLUGIN_PREFIX in lowered or "alibabacloud___" in lowered:
         seed = {"event_type": "mcp_tool_use"}
-        m = re.search(r"(AlibabaCloud___\w+)", tool_name)
+        m = re.search(r"AlibabaCloud(?:___(?!_)|_(?!_))(\w+)", tool_name)
         if m:
-            seed["mcp_tool"] = m.group(1)
+            seed["mcp_tool"] = f"AlibabaCloud___{m.group(1)}"
         # Extract plugin from name like mcp__plugin_<plugin>_<plugin>__*
         m2 = re.search(r"mcp__plugin_(alibabacloud[-_a-z0-9]+?)_", tool_name, re.IGNORECASE)
         if m2:
@@ -406,26 +386,40 @@ _AGENT_BINARIES = ("claude", "codex", "QoderWork")
 
 
 def _find_agent_pid() -> "int | None":
-    """Walk up the process tree to find the agent (claude/codex/QoderWork) PID."""
+    """Find the agent PID from one process-table snapshot."""
     import subprocess as _sp
+    try:
+        output = _sp.check_output(
+            ["ps", "-axo", "pid=,ppid=,comm="],
+            text=True,
+            stderr=_sp.DEVNULL,
+            timeout=2,
+        )
+    except Exception:
+        return None
+
+    processes = {}
+    for line in output.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) != 3:
+            continue
+        try:
+            processes[int(parts[0])] = (int(parts[1]), parts[2])
+        except ValueError:
+            continue
+
     pid = os.getpid()
     for _ in range(10):
-        try:
-            ppid = int(_sp.check_output(
-                ["ps", "-o", "ppid=", "-p", str(pid)],
-                text=True, stderr=_sp.DEVNULL,
-            ).strip())
-        except Exception:
+        current = processes.get(pid)
+        if current is None:
             break
+        ppid = current[0]
         if ppid <= 1:
             break
-        try:
-            comm = _sp.check_output(
-                ["ps", "-o", "comm=", "-p", str(ppid)],
-                text=True, stderr=_sp.DEVNULL,
-            ).strip().rsplit("/", 1)[-1]
-        except Exception:
+        parent = processes.get(ppid)
+        if parent is None:
             break
+        comm = parent[1].rsplit("/", 1)[-1]
         if comm in _AGENT_BINARIES:
             return ppid
         pid = ppid

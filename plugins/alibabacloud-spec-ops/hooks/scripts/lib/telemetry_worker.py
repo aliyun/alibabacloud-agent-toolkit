@@ -3,7 +3,7 @@
 
 Processes queued telemetry events with:
 - Single-instance control via file lock (flock)
-- Fixed virtualenv with pinned package (no per-event uvx resolution)
+- Evolving MCP proxy command resolved through uvx
 - Configurable concurrency limit (sequential batch processing)
 - Hard timeout per upload with subprocess reaping
 - Finite retry budget with dead-letter logging
@@ -21,9 +21,7 @@ import subprocess
 import sys
 import time
 
-MCP_PROXY_PACKAGE = "alibabacloud.mcp-proxy"
-MCP_PROXY_PINNED_VERSION = "0.5.1"
-MCP_PROXY_PIN = f"{MCP_PROXY_PACKAGE}=={MCP_PROXY_PINNED_VERSION}"
+MCP_PROXY_UVX_SPEC = "alibabacloud.mcp-proxy@latest"
 
 DEFAULT_MAX_CONCURRENT = int(os.environ.get(
     "ALIBABACLOUD_TELEMETRY_MAX_CONCURRENT", "4"
@@ -128,75 +126,11 @@ def _remove_pid_file(pid_path):
 
 
 def _get_upload_cmd(state_dir):
-    """Return the upload command argv prefix using fixed venv or pinned uvx."""
+    """Return the upload command argv prefix."""
     override = os.environ.get("ALIBABACLOUD_TELEMETRY_UPLOADER")
     if override:
         return override.split()
-
-    venv_dir = os.path.join(state_dir, ".venv")
-    venv_bin = os.path.join(venv_dir, "bin", "plugin-telemetry")
-
-    if os.path.isfile(venv_bin):
-        return [venv_bin]
-
-    if _ensure_venv(state_dir):
-        if os.path.isfile(venv_bin):
-            return [venv_bin]
-
-    return [
-        "uvx", "--from",
-        f"{MCP_PROXY_PACKAGE}=={MCP_PROXY_PINNED_VERSION}",
-        "plugin-telemetry",
-    ]
-
-
-def _ensure_venv(state_dir):
-    """Create or update the fixed virtualenv. Returns True on success."""
-    venv_dir = os.path.join(state_dir, ".venv")
-    marker = os.path.join(venv_dir, ".telemetry-version")
-
-    if os.path.isfile(marker):
-        try:
-            with open(marker) as f:
-                if f.read().strip() == MCP_PROXY_PIN:
-                    return True
-        except OSError:
-            pass
-
-    try:
-        import venv as venv_mod
-        _log(f"Creating venv at {venv_dir}")
-        venv_mod.EnvBuilder(with_pip=True, clear=True).create(venv_dir)
-    except Exception as e:
-        _log(f"venv creation failed: {e}")
-        return False
-
-    pip_bin = os.path.join(venv_dir, "bin", "pip")
-    try:
-        result = subprocess.run(
-            [pip_bin, "install", "--quiet", MCP_PROXY_PIN],
-            timeout=120,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            _log(f"pip install failed: {result.stderr[:500]}")
-            return False
-    except subprocess.TimeoutExpired:
-        _log("pip install timed out after 120s")
-        return False
-    except Exception as e:
-        _log(f"pip install error: {e}")
-        return False
-
-    try:
-        with open(marker, "w") as f:
-            f.write(MCP_PROXY_PIN)
-    except OSError:
-        pass
-
-    _log(f"Installed {MCP_PROXY_PIN}")
-    return True
+    return ["uvx", MCP_PROXY_UVX_SPEC, "plugin-telemetry"]
 
 
 def _upload_one(cmd_prefix, args_dict):
@@ -209,13 +143,16 @@ def _upload_one(cmd_prefix, args_dict):
 
     timeout = DEFAULT_HARD_TIMEOUT
 
-    proc = subprocess.Popen(
-        argv,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True,
-    )
+    try:
+        proc = subprocess.Popen(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        raise RuntimeError(f"upload failed to start: {exc}") from exc
 
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
@@ -227,6 +164,14 @@ def _upload_one(cmd_prefix, args_dict):
     except subprocess.TimeoutExpired:
         _kill_process_tree(proc)
         raise RuntimeError(f"upload timed out after {timeout}s")
+    except BaseException:
+        if proc.poll() is None:
+            _kill_process_tree(proc)
+        raise
+    finally:
+        for stream in (proc.stdout, proc.stderr):
+            if stream is not None:
+                stream.close()
 
 
 def _kill_process_tree(proc):
@@ -269,14 +214,15 @@ def _list_pending(queue_dir):
 
     files.sort()
     if len(files) > MAX_QUEUE_SIZE:
-        excess = files[MAX_QUEUE_SIZE:]
+        excess_count = len(files) - MAX_QUEUE_SIZE
+        excess = files[:excess_count]
         for f in excess:
             try:
                 os.unlink(os.path.join(queue_dir, f))
             except OSError:
                 pass
         _log(f"Queue overflow: dropped {len(excess)} oldest events")
-        files = files[:MAX_QUEUE_SIZE]
+        files = files[excess_count:]
     return files
 
 
@@ -286,7 +232,7 @@ def _process_batch(state_dir):
     failed_dir = os.path.join(state_dir, "telemetry-queue", "failed")
     os.makedirs(failed_dir, mode=0o700, exist_ok=True)
 
-    files = _list_pending(queue_dir)
+    files = _list_pending(queue_dir)[:max(1, DEFAULT_MAX_CONCURRENT)]
     if not files:
         return 0
 
@@ -376,6 +322,38 @@ def _cleanup_old(state_dir):
             pass
 
 
+def _has_pending(state_dir):
+    queue_dir = os.path.join(state_dir, "telemetry-queue", "pending")
+    try:
+        with os.scandir(queue_dir) as entries:
+            return any(
+                entry.name.endswith(".json") and not entry.name.endswith(".tmp")
+                for entry in entries
+            )
+    except FileNotFoundError:
+        return False
+
+
+def _start_replacement_worker(state_dir):
+    """Start a successor after releasing the lock when late work exists."""
+    try:
+        subprocess.Popen(
+            [sys.executable, os.path.abspath(__file__), state_dir],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+            env=os.environ.copy(),
+        )
+    except OSError:
+        pass
+
+
+def _raise_shutdown(signum, _frame):
+    raise SystemExit(128 + signum)
+
+
 def main():
     if len(sys.argv) < 2:
         print(f"Usage: {sys.argv[0]} <state-dir> [--cleanup-only]", file=sys.stderr)
@@ -404,6 +382,7 @@ def main():
     if lock_info is None:
         return
 
+    previous_sigterm = signal.signal(signal.SIGTERM, _raise_shutdown)
     pid_path = _write_pid_file(state_dir)
     try:
         if cleanup_only:
@@ -423,6 +402,12 @@ def main():
     finally:
         _remove_pid_file(pid_path)
         _release_lock(lock_info)
+        signal.signal(signal.SIGTERM, previous_sigterm)
+
+    # Close the enqueue-vs-exit race: after the lock and PID are gone, either
+    # this process observes late work or a later enqueuer starts the worker.
+    if _has_pending(state_dir):
+        _start_replacement_worker(state_dir)
 
 
 if __name__ == "__main__":

@@ -403,4 +403,52 @@ unset QODER_WORK
 rm -rf "$traceDir9" "$stateDir9"
 
 echo ""
+echo "=== Test: New Qoder mcp_call records inner MCP tool ==="
+
+traceDir10="$(mktemp -d)"
+stateDir10="$(mktemp -d)"
+export ALIBABACLOUD_TRACE_DIR="$traceDir10"
+export ALIBABACLOUD_TELEMETRY_STATE_DIR="$stateDir10"
+export QODER_WORK="1"
+export QODER_PRODUCT_ID="qoder"
+
+echo '{"session_id":"trace-new-qoder-mcp","prompt":"用 New Qoder 查询 ECS 实例","hook_event_name":"UserPromptSubmit"}' | \
+    python3 "$HOOKS_DIR/lib/prompt_handler.py" > /dev/null 2>&1 || true
+
+echo '{"session_id":"trace-new-qoder-mcp","tool_name":"mcp_call","tool_use_id":"toolu_new_qoder_mcp_trace","tool_input":{"toolName":"mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud_CallCLI","arguments":{"command":"aliyun ecs DescribeInstances --RegionId cn-hangzhou"}},"hook_event_name":"PreToolUse"}' | \
+    python3 "$HOOKS_DIR/lib/pre_handler.py" > /dev/null 2>&1 || true
+
+echo '{"session_id":"trace-new-qoder-mcp","tool_name":"mcp_call","tool_use_id":"toolu_new_qoder_mcp_trace","tool_input":{"toolName":"mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud_CallCLI","arguments":{"command":"aliyun ecs DescribeInstances --RegionId cn-hangzhou"}},"tool_response":[{"type":"text","text":"{\"RequestId\":\"new-qoder-request\",\"Instances\":{\"Instance\":[]}}"}],"hook_event_name":"PostToolUse"}' | \
+    python3 "$HOOKS_DIR/lib/post_handler.py" > /dev/null 2>&1 || true
+
+traceFile10="$traceDir10/trace-new-qoder-mcp.jsonl"
+if [ ! -f "$traceFile10" ]; then
+    echo "FAIL: New Qoder mcp_call trace file not created"
+    ls -la "$traceDir10"
+    exit 1
+fi
+
+if ! grep -q '"event": "tool_start"' "$traceFile10" || ! grep -q '"event": "tool_end"' "$traceFile10"; then
+    echo "FAIL: New Qoder mcp_call missing tool_start/tool_end"
+    cat "$traceFile10"
+    exit 1
+fi
+
+if ! grep -q '"tool_name": "mcp__plugin_alibabacloud-core_alibabacloud-core__AlibabaCloud_CallCLI"' "$traceFile10"; then
+    echo "FAIL: New Qoder mcp_call did not unwrap the inner tool_name"
+    cat "$traceFile10"
+    exit 1
+fi
+
+if ! grep -q '"duration_ms":' "$traceFile10"; then
+    echo "FAIL: New Qoder mcp_call did not pair pre/post duration"
+    cat "$traceFile10"
+    exit 1
+fi
+
+echo "PASS: New Qoder mcp_call records inner MCP tool"
+unset QODER_WORK QODER_PRODUCT_ID
+rm -rf "$traceDir10" "$stateDir10"
+
+echo ""
 echo "=== All trace tests passed ==="

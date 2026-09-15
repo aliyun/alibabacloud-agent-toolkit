@@ -5,13 +5,14 @@ Validates:
 - Off switch (ALIBABACLOUD_TELEMETRY=false): no upload processes spawned
 - Queue-based enqueue: events written to queue directory correctly
 - Single-instance lock: only one worker processes at a time
-- Bounded concurrency: configurable limits on parallel uploads
+- Bounded batches: configurable limits on sequential uploads per round
 - Hard timeout: uploads killed after timeout, subprocess reaped
 - Finite retry: failed events retried then moved to dead-letter
 - Process cleanup: no orphan processes after worker exits
-- Worker uses fixed venv, not uvx @latest per event
+- Worker resolves the evolving uploader through uvx @latest
 """
 import fcntl
+import io
 import json
 import os
 import signal
@@ -20,6 +21,7 @@ import sys
 import tempfile
 import time
 import unittest
+from pathlib import Path
 from unittest import mock
 
 sys.path.insert(
@@ -216,6 +218,18 @@ class TestWorkerBatchProcessing(unittest.TestCase):
         self.assertEqual(len(remaining), 0)
 
     @mock.patch("telemetry_worker._upload_one")
+    def test_process_batch_respects_configured_batch_size(self, mock_upload):
+        for index in range(5):
+            self._write_event({"event-type": "tool_call", "idx": str(index)})
+
+        with mock.patch.object(telemetry_worker, "DEFAULT_MAX_CONCURRENT", 2):
+            count = telemetry_worker._process_batch(self.tmp)
+
+        self.assertEqual(count, 2)
+        self.assertEqual(mock_upload.call_count, 2)
+        self.assertEqual(len(os.listdir(self.queue_dir)), 3)
+
+    @mock.patch("telemetry_worker._upload_one")
     def test_process_batch_retry_on_failure(self, mock_upload):
         mock_upload.side_effect = RuntimeError("upload failed")
         self._write_event({"event-type": "tool_call"})
@@ -269,12 +283,17 @@ class TestWorkerBatchProcessing(unittest.TestCase):
 
             files = telemetry_worker._list_pending(self.queue_dir)
             self.assertEqual(len(files), 3)
+            retained_indexes = []
+            for filename in files:
+                with open(os.path.join(self.queue_dir, filename)) as f:
+                    retained_indexes.append(json.load(f)["args"]["idx"])
+            self.assertEqual(retained_indexes, ["2", "3", "4"])
         finally:
             telemetry_worker.MAX_QUEUE_SIZE = old_max
 
 
 class TestUploadCommand(unittest.TestCase):
-    """Worker uses fixed version, not @latest."""
+    """Worker uses the evolving MCP proxy through uvx."""
 
     def test_get_upload_cmd_override(self):
         with mock.patch.dict(
@@ -283,21 +302,19 @@ class TestUploadCommand(unittest.TestCase):
             cmd = telemetry_worker._get_upload_cmd("/tmp/test")
         self.assertEqual(cmd, ["echo", "test"])
 
-    def test_get_upload_cmd_no_venv_uses_pinned_uvx(self):
+    def test_get_upload_cmd_uses_latest_uvx(self):
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.dict(
                 os.environ, {}, clear=True
             ):
                 cmd = telemetry_worker._get_upload_cmd(tmp)
-        self.assertIn("--from", cmd)
-        pin_found = any(
-            f"=={telemetry_worker.MCP_PROXY_PINNED_VERSION}" in c
-            for c in cmd
-        )
-        self.assertTrue(pin_found, f"No pinned version in cmd: {cmd}")
-        self.assertNotIn("@latest", " ".join(cmd))
+        self.assertEqual(cmd, [
+            "uvx",
+            "alibabacloud.mcp-proxy@latest",
+            "plugin-telemetry",
+        ])
 
-    def test_get_upload_cmd_uses_existing_venv(self):
+    def test_get_upload_cmd_ignores_legacy_venv(self):
         with tempfile.TemporaryDirectory() as tmp:
             venv_bin = os.path.join(tmp, ".venv", "bin", "plugin-telemetry")
             os.makedirs(os.path.dirname(venv_bin), exist_ok=True)
@@ -307,7 +324,16 @@ class TestUploadCommand(unittest.TestCase):
 
             cmd = telemetry_worker._get_upload_cmd(tmp)
 
-        self.assertEqual(cmd, [venv_bin])
+        self.assertEqual(cmd, [
+            "uvx",
+            "alibabacloud.mcp-proxy@latest",
+            "plugin-telemetry",
+        ])
+
+    def test_worker_has_no_pinned_version_or_venv_bootstrap(self):
+        source = Path(telemetry_worker.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("MCP_PROXY_PINNED_VERSION", source)
+        self.assertNotIn("_ensure_venv", source)
 
 
 class TestProcessTreeKilling(unittest.TestCase):
@@ -347,6 +373,42 @@ class TestUploadTimeout(unittest.TestCase):
             telemetry_worker._upload_one(cmd_prefix, {})
         self.assertIn("timed out", str(ctx.exception))
 
+    @mock.patch("telemetry_worker._kill_process_tree")
+    @mock.patch("telemetry_worker.subprocess.Popen")
+    def test_timeout_closes_subprocess_pipes(self, mock_popen, _mock_kill):
+        proc = mock_popen.return_value
+        proc.stdout = io.BytesIO()
+        proc.stderr = io.BytesIO()
+        proc.communicate.side_effect = subprocess.TimeoutExpired(
+            cmd=["slow-uploader"], timeout=1
+        )
+
+        with self.assertRaises(RuntimeError):
+            telemetry_worker._upload_one(["slow-uploader"], {})
+
+        self.assertTrue(proc.stdout.closed)
+        self.assertTrue(proc.stderr.closed)
+
+    def test_unexpected_communicate_error_kills_real_child(self):
+        child = subprocess.Popen(
+            ["sleep", "60"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        original_communicate = child.communicate
+        child.communicate = mock.Mock(side_effect=OSError("broken communicate"))
+        try:
+            with mock.patch("telemetry_worker.subprocess.Popen", return_value=child):
+                with self.assertRaises(OSError):
+                    telemetry_worker._upload_one(["ignored"], {})
+            self.assertIsNotNone(child.poll())
+        finally:
+            child.communicate = original_communicate
+            if child.poll() is None:
+                telemetry_worker._kill_process_tree(child)
+
 
 class TestPIDFile(unittest.TestCase):
     """PID file tracks worker process."""
@@ -380,6 +442,29 @@ class TestPIDFile(unittest.TestCase):
         pid_path = telemetry_worker._write_pid_file(self.tmp)
         telemetry_worker._remove_pid_file(pid_path)
         self.assertFalse(os.path.exists(pid_path))
+
+
+class TestWorkerShutdownHandshake(unittest.TestCase):
+    def test_event_queued_during_release_starts_replacement_worker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pending = os.path.join(tmp, "telemetry-queue", "pending")
+            os.makedirs(pending)
+
+            def queue_during_release(_lock_info):
+                with open(os.path.join(pending, "late.json"), "w") as f:
+                    json.dump({"args": {}, "retries": 0}, f)
+
+            with (
+                mock.patch.object(sys, "argv", [telemetry_worker.__file__, tmp]),
+                mock.patch("telemetry_worker._check_existing_worker", return_value=False),
+                mock.patch("telemetry_worker._acquire_lock", return_value=(1, "lock")),
+                mock.patch("telemetry_worker._release_lock", side_effect=queue_during_release),
+                mock.patch("telemetry_worker._process_batch", return_value=0),
+                mock.patch("telemetry_worker.subprocess.Popen") as mock_popen,
+            ):
+                telemetry_worker.main()
+
+            mock_popen.assert_called_once()
 
 
 class TestCleanup(unittest.TestCase):
