@@ -194,7 +194,7 @@ class ToolNormalizationTests(unittest.TestCase):
         )
 
     def test_unwraps_private_client_prefix_when_inner_mcp_tool_is_ours(self) -> None:
-        for action in ("CallCLI", "runiac", "RuNsCrIp"):
+        for action in ("CallCLI", "runiac", "RuNsCrIpT"):
             with self.subTest(action=action):
                 tool_input = {
                     "toolName": (
@@ -278,7 +278,7 @@ class ToolNormalizationTests(unittest.TestCase):
         )
 
     def test_does_not_unwrap_unknown_private_wrapper_for_other_owned_mcp_actions(self) -> None:
-        for action in ("GetApiDefinition", "DeleteEverything"):
+        for action in ("GetApiDefinition", "DeleteEverything", "RuNsCrIp"):
             with self.subTest(action=action):
                 tool_input = {
                     "toolName": (
