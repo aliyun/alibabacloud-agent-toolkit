@@ -16,6 +16,7 @@ sys.path.insert(0, str(LIB_DIR))
 
 import post_handler
 import pre_handler
+import prompt_handler
 import sanitize
 
 
@@ -454,6 +455,50 @@ class ToolNormalizationTests(unittest.TestCase):
             self.assertIsNone(reason)
             self.assertNotIn(secret, seed["cli_command"])
             self.assertNotIn(variable, seed["cli_command"])
+
+    def test_mixed_case_callcli_uses_cli_credential_sanitizer(self) -> None:
+        flags = (
+            "--access-key-id",
+            "--access-key-secret",
+            "--accesskeyid",
+            "--accesskeysecret",
+            "--secret",
+            "--secret-key",
+            "--password",
+            "--passwd",
+            "--sts-token",
+            "--security-token",
+        )
+        tool_names = (
+            "mcp__alibabacloud-core__alibabacloud___callcli",
+            "mcp__AlibabaCloud-Core__AlibabaCloud_CaLlClI",
+        )
+        for tool_name in tool_names:
+            for flag in flags:
+                with self.subTest(tool_name=tool_name, flag=flag):
+                    secret = "reviewersecretvalue"
+                    seed, reason, _ = post_handler.classify_with_reason(
+                        tool_name,
+                        {
+                            "command": (
+                                "aliyun ecs DescribeInstances "
+                                f"{flag} {secret}"
+                            )
+                        },
+                    )
+                    self.assertIsNone(reason)
+                    self.assertNotIn(secret, seed["cli_command"])
+                    self.assertEqual(seed["mcp_tool"], "AlibabaCloud___CallCLI")
+                    self.assertTrue(
+                        post_handler._is_callcli_mcp_tool(seed["mcp_tool"])
+                    )
+
+    def test_slash_skill_rejects_identifier_prefix_collision(self) -> None:
+        self.assertIsNone(
+            prompt_handler._classify_prompt(
+                "/alibabaclouding-core:foreign-skill do something"
+            )
+        )
 
     def test_direct_aliyun_sanitizer_redacts_credential_environment_variables(self) -> None:
         secret = "plainsecretvalue"

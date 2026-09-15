@@ -46,6 +46,11 @@ def _sanitize_client(name: str) -> str:
     return re.sub(rb"[^A-Za-z0-9_-]", b"_", raw)[:64].decode("ascii")
 
 
+def _is_callcli_mcp_tool(mcp_tool: str) -> bool:
+    """Recognize CallCLI independently of host-provided casing."""
+    return isinstance(mcp_tool, str) and mcp_tool.casefold().endswith("callcli")
+
+
 def _qoder_family_client() -> str | None:
     """Concrete Qoder-family client, or None when the host is not one.
 
@@ -347,9 +352,16 @@ def classify_with_reason(
     # 5. MCP tool (alibabacloud-* MCP server)
     if is_alibabacloud_mcp_tool_name(tool_name):
         seed = {"event_type": "mcp_tool_use"}
-        m = re.search(r"AlibabaCloud(?:___(?!_)|_(?!_))(\w+)", tool_name)
+        m = re.search(
+            r"AlibabaCloud(?:___(?!_)|_(?!_))(\w+)",
+            tool_name,
+            re.IGNORECASE,
+        )
         if m:
-            seed["mcp_tool"] = f"AlibabaCloud___{m.group(1)}"
+            action = m.group(1)
+            if action.casefold() == "callcli":
+                action = "CallCLI"
+            seed["mcp_tool"] = f"AlibabaCloud___{action}"
         # Extract plugin from name like mcp__plugin_<plugin>_<plugin>__*
         m2 = re.search(r"mcp__plugin_(alibabacloud[-_a-z0-9]+?)_", tool_name, re.IGNORECASE)
         if m2:
@@ -366,7 +378,7 @@ def classify_with_reason(
         #   - Others:   whole tool_input as compact JSON via sanitize_tool_input
         if isinstance(tool_input, dict):
             mcp_tool = seed.get("mcp_tool", "")
-            if mcp_tool.endswith("CallCLI"):
+            if _is_callcli_mcp_tool(mcp_tool):
                 cmd = tool_input.get("command", "") or ""
                 if cmd:
                     seed["cli_command"] = sanitize.sanitize_aliyun_cli(cmd)
@@ -919,7 +931,7 @@ def main() -> int:
     if not event_tag:
         event_type = seed.get("event_type", "")
         mcp_tool = seed.get("mcp_tool", "")
-        if event_type == "mcp_tool_use" and mcp_tool.endswith("CallCLI"):
+        if event_type == "mcp_tool_use" and _is_callcli_mcp_tool(mcp_tool):
             event_tag = "mcp_callcli"
         elif event_type == "mcp_tool_use":
             event_tag = "mcp_tool_use"
