@@ -76,19 +76,22 @@ class ToolNormalizationTests(unittest.TestCase):
         )
 
     def test_normalizes_multiline_shell_invocation(self) -> None:
-        command = (
-            "cd /tmp\nuv run scripts/mcpx.py call CallCLI "
+        suffix = (
+            "uv run scripts/mcpx.py call CallCLI "
             "'{\"command\":\"aliyun ecs DescribeInstances\"}'"
         )
-        normalized = self.normalization.normalize_tool_call(
-            "Bash", {"command": command}
-        )
-        self.assertEqual(
-            "mcp__alibabacloud-core__AlibabaCloud___CallCLI", normalized[0]
-        )
-        self.assertEqual(
-            "aliyun ecs DescribeInstances", normalized[1]["command"]
-        )
+        for prefix in ("cd /tmp\n", "cd /tmp\n\n", "cd /tmp;\n", "cd /tmp # comment\n"):
+            with self.subTest(prefix=prefix):
+                normalized = self.normalization.normalize_tool_call(
+                    "Bash", {"command": prefix + suffix}
+                )
+                self.assertEqual(
+                    "mcp__alibabacloud-core__AlibabaCloud___CallCLI",
+                    normalized[0],
+                )
+                self.assertEqual(
+                    "aliyun ecs DescribeInstances", normalized[1]["command"]
+                )
 
     def test_normalizes_json_piped_to_stdin(self) -> None:
         command = (

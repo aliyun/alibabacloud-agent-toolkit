@@ -57,20 +57,67 @@ def _json_command(tokens: list[str]) -> str | None:
     return None
 
 
+def _strip_shell_comments(command: str) -> str:
+    """Remove unquoted shell comments without consuming their newline."""
+    result: list[str] = []
+    quote = ""
+    at_word_start = True
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if quote:
+            result.append(char)
+            if char == quote:
+                quote = ""
+            elif char == "\\" and quote == '"' and index + 1 < len(command):
+                index += 1
+                result.append(command[index])
+            index += 1
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            at_word_start = False
+            result.append(char)
+        elif char == "\\" and index + 1 < len(command):
+            at_word_start = False
+            result.append(char)
+            index += 1
+            result.append(command[index])
+        elif char == "#" and at_word_start:
+            while index < len(command) and command[index] != "\n":
+                index += 1
+            continue
+        else:
+            result.append(char)
+            at_word_start = char.isspace() or char in ";|&()<>"
+        index += 1
+    return "".join(result)
+
+
 def _shell_tokens(command: str) -> list[str] | None:
     """Tokenize enough shell syntax to preserve comments and pipe direction."""
     lexer = shlex.shlex(
-        command,
+        _strip_shell_comments(command),
         posix=True,
         punctuation_chars="|&;<>()\n",
     )
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
-    lexer.commenters = "#"
+    lexer.commenters = ""
     try:
-        return list(lexer)
+        raw_tokens = list(lexer)
     except ValueError:
         return None
+
+    tokens: list[str] = []
+    punctuation = re.compile(r"[|&;<>()\n]+")
+    operators = re.compile(r"<<<|<<|>>|>&|<&|<>|>\||&&|\|\||\|&|[;&|()<>\n]")
+    for token in raw_tokens:
+        if punctuation.fullmatch(token):
+            tokens.extend(operators.findall(token))
+        else:
+            tokens.append(token)
+    return tokens
 
 
 def _command_segments(tokens: list[str]) -> tuple[list[list[str]], list[str]]:
