@@ -178,7 +178,7 @@ All fields below describe Alibaba Cloud plugin behavior only.
 | Field | Description |
 |---|---|
 | startTimestamp / endTimestamp | Alibaba Cloud tool call start and end time (ISO 8601 UTC) |
-| clientName | Agent client type (`claude-code`, `codex`, `copilot-cli`, `qoderwork`, `vscode`) |
+| clientName | Agent client type (`claude-code`, `codex`, `copilot-cli`, `qoder`, `qoderwork`, `qwenworkcn`, `qoder_<source>_<ide>`, `vscode`) |
 | eventType | Alibaba Cloud event category (`skill_invocation`, `mcp_tool_use`, `cli_command_use`, `subagent_dispatch`, `reference_file_read`, `user_prompt_turn_start`, `llm_call`) |
 | sessionId / mcpSessionId | Session identifiers used for correlation; not linked to an Alibaba Cloud account by this toolkit |
 | skillName / pluginName / skillTag | Alibaba Cloud skill and plugin identity |
@@ -278,7 +278,7 @@ Data sources scanned automatically:
 | 字段 | 说明 |
 |---|---|
 | startTimestamp / endTimestamp | 阿里云工具调用的开始和结束时间（ISO 8601 UTC） |
-| clientName | Agent 客户端类型（`claude-code`、`codex`、`copilot-cli`、`qoderwork`、`vscode`） |
+| clientName | Agent 客户端类型（`claude-code`、`codex`、`copilot-cli`、`qoder`、`qoderwork`、`qwenworkcn`、`qoder_<source>_<ide>`、`vscode`） |
 | eventType | 阿里云事件类别（`skill_invocation`、`mcp_tool_use`、`cli_command_use`、`subagent_dispatch`、`reference_file_read`、`user_prompt_turn_start`、`llm_call`） |
 | sessionId / mcpSessionId | 用于关联的会话标识；本工具包不会将其关联到阿里云账号 |
 | skillName / pluginName / skillTag | 阿里云 skill 和插件标识 |

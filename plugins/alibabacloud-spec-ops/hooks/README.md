@@ -61,9 +61,10 @@ backup is written next to the settings file on every run.
 
 `QODER_WORK=1` only says "some Qoder-family host". Hosts that know their own
 product additionally inject `QODER_WORK_INTEGRATION_MODE`,
-`QODER_WORK_INTEGRATION_PRODUCT`, `QODER_AGENT`, `QODER_HOOK_SOURCE` and
-`QODER_IDE`, which the hook scripts use to report the concrete client instead
-of the generic `qoderwork`. See [Client detection](#client-detection).
+`QODER_WORK_INTEGRATION_PRODUCT`, `QODER_PRODUCT_ID`, `VSCODE_BRAND`,
+`QODER_AGENT`, `QODER_HOOK_SOURCE` and `QODER_IDE`, which the hook scripts
+use to report the concrete client instead of the generic `qoderwork`. See
+[Client detection](#client-detection).
 
 ## Prerequisites
 
@@ -170,6 +171,8 @@ export ALIBABACLOUD_TELEMETRY=false
 | `QODER_WORK`                        | unset                                                  | Set to `1` to declare a Qoder-family client. The `openplugin` installer prefixes each registered hook command with this var. Yields `qoderwork` unless one of the vars below narrows it down. |
 | `QODER_WORK_INTEGRATION_MODE`       | unset                                                  | Set to `1` by Qoder-family hosts running in integration mode. On its own it still resolves to `qoderwork`. |
 | `QODER_WORK_INTEGRATION_PRODUCT`    | unset                                                  | Highest-priority Qoder-family marker: when non-empty its value becomes the client name verbatim (sanitized), e.g. `qwenworkcn`. |
+| `QODER_PRODUCT_ID`                  | unset                                                  | New Qoder sets `qoder` or `qoder-cn`; both resolve to the stable client name `qoder`. |
+| `VSCODE_BRAND`                      | unset                                                  | Qoder IDE sets `Qoder`; this resolves to `qoder` even though the shared hook command also sets `QODER_WORK=1`. |
 | `QODER_AGENT`                       | unset                                                  | Set to `true` by qodercli / qoderIDE. Combined with the two vars below it resolves to `qoder_<QODER_HOOK_SOURCE>_<QODER_IDE>`. |
 | `QODER_HOOK_SOURCE`                 | unset                                                  | Hook origin reported by a `QODER_AGENT=true` host, e.g. `cli`. Required together with `QODER_IDE`; if either is missing the client falls back to `qoderwork`. |
 | `QODER_IDE`                         | unset                                                  | IDE/workspace discriminator reported by a `QODER_AGENT=true` host, e.g. `0`. Required together with `QODER_HOOK_SOURCE`. |
@@ -282,8 +285,9 @@ omitted (we never generate a caller-side UUID).
 ### Tool normalization (`lib/tool_normalization.py`)
 
 Pre- and post-tool handlers share one normalization layer. Native Qoder-family
-wrappers (`qw_mcp_call`, `qw_mcp_get`, and `CallMcpTool`) are unwrapped into
-their inner MCP tool and arguments. A Bash command that invokes `mcpx.py call
+wrappers (`qw_mcp_call`, `qw_mcp_get`, `CallMcpTool`, and New Qoder's
+`mcp_call`) are unwrapped into their inner MCP tool and arguments. A Bash
+command that invokes `mcpx.py call
 CallCLI` with a JSON request containing an `aliyun` command is normalized to
 `AlibabaCloud___CallCLI`; this covers connector-based QwenWork calls while
 preserving native MCP and direct Bash behavior. Parsing uses only `shlex` and
@@ -574,11 +578,13 @@ the environment the host injects:
 
 1. `QODER_WORK_INTEGRATION_PRODUCT` non-empty → that value, e.g. `qwenworkcn`
    for 千问办公中国版
-2. else `QODER_AGENT=true` with both `QODER_HOOK_SOURCE` and `QODER_IDE`
+2. else `QODER_PRODUCT_ID=qoder|qoder-cn` → `qoder` for New Qoder
+3. else `VSCODE_BRAND=Qoder` → `qoder` for Qoder IDE
+4. else `QODER_AGENT=true` with both `QODER_HOOK_SOURCE` and `QODER_IDE`
    non-empty → `qoder_<QODER_HOOK_SOURCE>_<QODER_IDE>`, e.g. `qoder_cli_0`
-3. else → `qoderwork`, the legacy default that `QODER_WORK=1` alone yields
+5. else → `qoderwork`, the legacy default that `QODER_WORK=1` alone yields
 
-Step 3 is only entered when at least one of `QODER_WORK=1`,
+Step 5 is only entered when at least one of `QODER_WORK=1`,
 `QODER_WORK_INTEGRATION_MODE=1` or `QODER_AGENT=true` is set, so a plain Claude
 Code session still falls through to `claude-code`.
 

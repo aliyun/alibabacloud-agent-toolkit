@@ -141,6 +141,43 @@ class ToolNormalizationTests(unittest.TestCase):
             self.normalization.normalize_tool_call("qw_mcp_call", tool_input),
         )
 
+    def test_normalizes_new_qoder_mcp_call_wrapper(self) -> None:
+        tool_input = {
+            "toolName": (
+                "mcp__plugin_alibabacloud-core_alibabacloud-core__"
+                "AlibabaCloud_CallCLI"
+            ),
+            "arguments": {
+                "command": "aliyun ecs DescribeInstances --RegionId cn-hangzhou"
+            },
+        }
+        normalized = self.normalization.normalize_tool_call(
+            "mcp_call", tool_input
+        )
+        self.assertEqual(
+            (
+                tool_input["toolName"],
+                tool_input["arguments"],
+            ),
+            normalized,
+        )
+        seed, reason, _ = post_handler.classify_with_reason(*normalized)
+        self.assertIsNone(reason)
+        self.assertEqual("mcp_tool_use", seed["event_type"])
+        self.assertEqual("AlibabaCloud___CallCLI", seed["mcp_tool"])
+        self.assertEqual("alibabacloud-core", seed["plugin_name"])
+
+    def test_does_not_extract_unsupported_separator_widths(self) -> None:
+        for separator in ("__", "____"):
+            tool_name = (
+                "mcp__plugin_alibabacloud-core_alibabacloud-core__"
+                f"AlibabaCloud{separator}CallCLI"
+            )
+            seed, reason, _ = post_handler.classify_with_reason(tool_name, {})
+            self.assertIsNone(reason)
+            self.assertEqual("mcp_tool_use", seed["event_type"])
+            self.assertNotIn("mcp_tool", seed)
+
     def test_rejects_text_that_only_mentions_required_words(self) -> None:
         for command in (
             "echo mcpx.py call CallCLI aliyun",

@@ -9,7 +9,12 @@ import shlex
 from typing import Any
 
 
-QODERWORK_MCP_WRAPPERS = ("qw_mcp_call", "qw_mcp_get", "CallMcpTool")
+QODERWORK_MCP_WRAPPERS = (
+    "qw_mcp_call",
+    "qw_mcp_get",
+    "CallMcpTool",
+    "mcp_call",
+)
 NORMALIZED_CALLCLI_TOOL = (
     "mcp__alibabacloud-core__AlibabaCloud___CallCLI"
 )

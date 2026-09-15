@@ -49,25 +49,30 @@ def _qoder_family_client() -> str | None:
 
     qodercli / qoderIDE / qoderwork / qwenwork all install the same
     `qoderwork-hooks.json`, so they are told apart by the environment the
-    host injects: `QODER_WORK_INTEGRATION_PRODUCT` wins (e.g. `qwenworkcn`),
-    then `QODER_AGENT=true` with both `QODER_HOOK_SOURCE` and `QODER_IDE`
-    gives `qoder_<source>_<ide>`, otherwise the legacy default `qoderwork`.
+    host injects. Explicit Work product names win, New Qoder reports
+    `QODER_PRODUCT_ID=qoder`, Qoder IDE reports `VSCODE_BRAND=Qoder`, and
+    generic Work markers retain the legacy `qoderwork` default.
     """
-    if (
-        os.environ.get("QODER_WORK") != "1"
-        and os.environ.get("QODER_WORK_INTEGRATION_MODE") != "1"
-        and os.environ.get("QODER_AGENT") != "true"
-    ):
-        return None
     product = os.environ.get("QODER_WORK_INTEGRATION_PRODUCT") or ""
     if product:
         return _sanitize_client(product)
+    product_id = (os.environ.get("QODER_PRODUCT_ID") or "").lower()
+    if product_id in {"qoder", "qoder-cn"}:
+        return "qoder"
+    if (os.environ.get("VSCODE_BRAND") or "").lower() == "qoder":
+        return "qoder"
     if os.environ.get("QODER_AGENT") == "true":
         source = os.environ.get("QODER_HOOK_SOURCE") or ""
         ide = os.environ.get("QODER_IDE") or ""
         if source and ide:
             return _sanitize_client(f"qoder_{source}_{ide}")
-    return "qoderwork"
+    if (
+        os.environ.get("QODER_WORK") == "1"
+        or os.environ.get("QODER_WORK_INTEGRATION_MODE") == "1"
+        or os.environ.get("QODER_AGENT") == "true"
+    ):
+        return "qoderwork"
+    return None
 
 
 def detect_client(payload_str: str) -> str:
@@ -338,9 +343,9 @@ def classify_with_reason(
     lowered = tool_name.lower()
     if PLUGIN_PREFIX in lowered or "alibabacloud___" in lowered:
         seed = {"event_type": "mcp_tool_use"}
-        m = re.search(r"(AlibabaCloud___\w+)", tool_name)
+        m = re.search(r"AlibabaCloud(?:___(?!_)|_(?!_))(\w+)", tool_name)
         if m:
-            seed["mcp_tool"] = m.group(1)
+            seed["mcp_tool"] = f"AlibabaCloud___{m.group(1)}"
         # Extract plugin from name like mcp__plugin_<plugin>_<plugin>__*
         m2 = re.search(r"mcp__plugin_(alibabacloud[-_a-z0-9]+?)_", tool_name, re.IGNORECASE)
         if m2:

@@ -23,16 +23,17 @@ sanitize_client_bash() {
 # qoderwork-hooks.json, so they are told apart by the environment the host
 # injects. Mirrors _qoder_family_client() in the python handlers.
 qoder_family_client_bash() {
-    if [ "${QODER_WORK:-}" != "1" ] \
-        && [ "${QODER_WORK_INTEGRATION_MODE:-}" != "1" ] \
-        && [ "${QODER_AGENT:-}" != "true" ]; then
-        return 0
-    fi
     local product="${QODER_WORK_INTEGRATION_PRODUCT:-}"
     if [ -n "$product" ]; then
         sanitize_client_bash "$product"
         return 0
     fi
+    case "${QODER_PRODUCT_ID:-}" in
+        [Qq][Oo][Dd][Ee][Rr]|[Qq][Oo][Dd][Ee][Rr]-[Cc][Nn]) echo "qoder"; return 0 ;;
+    esac
+    case "${VSCODE_BRAND:-}" in
+        [Qq][Oo][Dd][Ee][Rr]) echo "qoder"; return 0 ;;
+    esac
     if [ "${QODER_AGENT:-}" = "true" ]; then
         local hookSource="${QODER_HOOK_SOURCE:-}"
         local ide="${QODER_IDE:-}"
@@ -41,7 +42,11 @@ qoder_family_client_bash() {
             return 0
         fi
     fi
-    echo "qoderwork"
+    if [ "${QODER_WORK:-}" = "1" ] \
+        || [ "${QODER_WORK_INTEGRATION_MODE:-}" = "1" ] \
+        || [ "${QODER_AGENT:-}" = "true" ]; then
+        echo "qoderwork"
+    fi
 }
 
 detect_client_bash() {
