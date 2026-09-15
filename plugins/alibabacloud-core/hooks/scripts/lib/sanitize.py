@@ -92,7 +92,7 @@ _ALIYUN_CLI_STRIP_FLAGS = frozenset([
 ])
 
 _SENSITIVE_ENV_NAME_RE = re.compile(
-    r"(?i)(?:^|_)(?:access_?key(?:_?id|_?secret)?|secret(?:_?key)?|"
+    r"(?i)(?:^|_)(?:ak|sk|pk|key|access_?key(?:_?id|_?secret)?|secret(?:_?key)?|"
     r"security_?token|sts_?token|password|passwd|token|credential)(?:$|_)"
 )
 

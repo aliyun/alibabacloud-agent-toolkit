@@ -381,26 +381,40 @@ _AGENT_BINARIES = ("claude", "codex", "QoderWork")
 
 
 def _find_agent_pid() -> "int | None":
-    """Walk up the process tree to find the agent (claude/codex/QoderWork) PID."""
+    """Find the agent PID from one process-table snapshot."""
     import subprocess as _sp
+    try:
+        output = _sp.check_output(
+            ["ps", "-axo", "pid=,ppid=,comm="],
+            text=True,
+            stderr=_sp.DEVNULL,
+            timeout=2,
+        )
+    except Exception:
+        return None
+
+    processes = {}
+    for line in output.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) != 3:
+            continue
+        try:
+            processes[int(parts[0])] = (int(parts[1]), parts[2])
+        except ValueError:
+            continue
+
     pid = os.getpid()
     for _ in range(10):
-        try:
-            ppid = int(_sp.check_output(
-                ["ps", "-o", "ppid=", "-p", str(pid)],
-                text=True, stderr=_sp.DEVNULL,
-            ).strip())
-        except Exception:
+        current = processes.get(pid)
+        if current is None:
             break
+        ppid = current[0]
         if ppid <= 1:
             break
-        try:
-            comm = _sp.check_output(
-                ["ps", "-o", "comm=", "-p", str(ppid)],
-                text=True, stderr=_sp.DEVNULL,
-            ).strip().rsplit("/", 1)[-1]
-        except Exception:
+        parent = processes.get(ppid)
+        if parent is None:
             break
+        comm = parent[1].rsplit("/", 1)[-1]
         if comm in _AGENT_BINARIES:
             return ppid
         pid = ppid

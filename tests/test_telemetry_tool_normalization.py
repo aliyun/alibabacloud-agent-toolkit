@@ -6,6 +6,7 @@ import importlib.util
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -156,6 +157,9 @@ class ToolNormalizationTests(unittest.TestCase):
             "python scripts/mcpx.py schema call CallCLI '{\"command\":\"aliyun ecs DescribeInstances\"}'",
             "scripts/mcpx.py unrelated call CallCLI '{\"command\":\"aliyun ecs DescribeInstances\"}'",
             "scripts/mcpx.py call CallCLI unrelated '{\"command\":\"aliyun ecs DescribeInstances\"}'",
+            "python -h scripts/mcpx.py call CallCLI '{\"command\":\"aliyun ecs DescribeInstances\"}'",
+            "python -V scripts/mcpx.py call CallCLI '{\"command\":\"aliyun ecs DescribeInstances\"}'",
+            "python -W scripts/mcpx.py call CallCLI '{\"command\":\"aliyun ecs DescribeInstances\"}'",
         ):
             with self.subTest(command=command):
                 self.assert_unchanged(command)
@@ -194,6 +198,10 @@ class ToolNormalizationTests(unittest.TestCase):
         for variable in (
             "ALIBABA_CLOUD_ACCESS_KEY_SECRET",
             "ALIBABA_CLOUD_SECURITY_TOKEN",
+            "AK",
+            "SK",
+            "PK",
+            "KEY",
         ):
             secret = "plainsecretvalue"
             command = (
@@ -219,6 +227,46 @@ class ToolNormalizationTests(unittest.TestCase):
         self.assertNotIn(secret, sanitized)
         self.assertNotIn("ALIBABA_CLOUD_ACCESS_KEY_SECRET", sanitized)
         self.assertEqual("aliyun ecs DescribeInstances", sanitized)
+
+    def test_compound_aliyun_command_redacts_short_credential_environment(self) -> None:
+        secret = "plainsecretvalue"
+        for variable in ("AK", "SK", "PK", "KEY"):
+            with self.subTest(variable=variable):
+                command = (
+                    f"{variable}={secret}; aliyun ecs DescribeInstances "
+                    f"--access-key-secret \"${variable}\""
+                )
+                sanitized = sanitize.sanitize_aliyun_cli(command)
+                self.assertNotIn(secret, sanitized)
+                self.assertNotIn(f"{variable}=", sanitized)
+
+    def test_wrapped_compound_command_redacts_short_credential_environment(self) -> None:
+        secret = "plainsecretvalue"
+        outer = {
+            "command": (
+                "uv run scripts/mcpx.py call CallCLI "
+                f"'{{\"command\":\"AK={secret}; aliyun ecs DescribeInstances "
+                "--access-key-secret \\\"$AK\\\"\"}'"
+            )
+        }
+        name, tool_input = post_handler.normalize_tool_call("Bash", outer)
+        seed, reason, _ = post_handler.classify_with_reason(name, tool_input)
+        self.assertIsNone(reason)
+        self.assertNotIn(secret, seed["cli_command"])
+        self.assertNotIn("AK=", seed["cli_command"])
+
+    def test_agent_pid_uses_one_process_snapshot(self) -> None:
+        process_table = (
+            "100 50 /usr/bin/python3\n"
+            "50 20 /Applications/QoderWork\n"
+            "20 1 /sbin/launchd\n"
+        )
+        with (
+            mock.patch("os.getpid", return_value=100),
+            mock.patch("subprocess.check_output", return_value=process_table) as check,
+        ):
+            self.assertEqual(50, post_handler._find_agent_pid())
+        check.assert_called_once()
 
 
 if __name__ == "__main__":

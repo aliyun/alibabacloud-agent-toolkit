@@ -148,7 +148,7 @@ def _is_mcpx_executable(invocation: list[str], index: int) -> bool:
         return True
     launcher = os.path.basename(prefix[0])
     if re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", launcher):
-        return all(re.fullmatch(r"-[bBdEhiIOPqRsSuvVWx]+", arg) for arg in prefix[1:])
+        return all(re.fullmatch(r"-[bBdEiIOPqRsSuvx]+", arg) for arg in prefix[1:])
     if launcher != "uv" or len(prefix) < 2 or prefix[1] != "run":
         return False
 
