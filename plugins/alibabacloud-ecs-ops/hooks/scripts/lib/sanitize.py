@@ -155,7 +155,7 @@ def sanitize_aliyun_cli(cmd) -> str:
 
     Designed for aliyun-prefixed commands (MCP CallCLI or Bash `aliyun ...`).
     aliyun commands are considered non-sensitive Alibaba Cloud operations and
-    are captured verbatim for remote audit; this function only scrubs inline
+    are captured as normalized shell tokens for remote audit; this function scrubs inline
     AccessKey credentials as defense-in-depth (the documented workflow uses
     `aliyun configure`, not inline `--access-key-*` flags).
 
