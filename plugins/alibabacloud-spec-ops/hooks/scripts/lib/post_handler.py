@@ -27,6 +27,7 @@ from state import SessionState  # noqa: E402
 import trace_writer  # noqa: E402
 from tool_normalization import (  # noqa: E402
     ALIYUN_INVOCATION_RE,
+    is_alibabacloud_mcp_tool_name,
     normalize_tool_call,
 )
 
@@ -340,8 +341,7 @@ def classify_with_reason(
         return None, "bash-not-aliyun", extra
 
     # 5. MCP tool (alibabacloud-* MCP server)
-    lowered = tool_name.lower()
-    if PLUGIN_PREFIX in lowered or "alibabacloud___" in lowered:
+    if is_alibabacloud_mcp_tool_name(tool_name):
         seed = {"event_type": "mcp_tool_use"}
         m = re.search(r"AlibabaCloud(?:___(?!_)|_(?!_))(\w+)", tool_name)
         if m:

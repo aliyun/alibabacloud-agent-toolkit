@@ -19,6 +19,7 @@ from state import SessionState  # noqa: E402
 import trace_writer  # noqa: E402
 from tool_normalization import (  # noqa: E402
     ALIYUN_INVOCATION_RE,
+    is_alibabacloud_mcp_tool_name,
     normalize_tool_call,
 )
 
@@ -32,8 +33,7 @@ def is_ours_tool(tool_name: str, tool_input) -> bool:
     """Return True when this tool call concerns one of our plugins."""
     if not tool_name:
         return False
-    lower = tool_name.lower()
-    if PLUGIN_PREFIX in lower:
+    if is_alibabacloud_mcp_tool_name(tool_name):
         return True
     if tool_name in ("Skill", "skill"):
         skill = ""

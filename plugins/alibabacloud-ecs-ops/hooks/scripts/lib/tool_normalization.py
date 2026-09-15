@@ -11,7 +11,6 @@ from typing import Any
 
 QODERWORK_MCP_WRAPPERS = (
     "qw_mcp_call",
-    "qw_mcp_get",
     "CallMcpTool",
     "mcp_call",
     "mcp__qw-builtin__qw_mcp_call",
@@ -31,12 +30,29 @@ ALIYUN_INVOCATION_RE = re.compile(
     r"aliyun"
     r"(?=\s|$|[;&|])"
 )
+ALIBABACLOUD_MCP_NAMESPACE_RE = re.compile(
+    r"^mcp__(?:plugin_)?alibabacloud(?:[-_][a-z0-9]+)*__.+$",
+    re.IGNORECASE,
+)
+ALIBABACLOUD_MCP_ACTION_RE = re.compile(
+    r"^(?:mcp__.+__)?AlibabaCloud(?:___(?!_)|_(?!_))[A-Za-z0-9_]+$",
+    re.IGNORECASE,
+)
+
+
+def is_alibabacloud_mcp_tool_name(tool_name: str) -> bool:
+    """Return whether a tool name has an Alibaba Cloud MCP ownership boundary."""
+    if not isinstance(tool_name, str) or not tool_name:
+        return False
+    return bool(
+        ALIBABACLOUD_MCP_NAMESPACE_RE.fullmatch(tool_name)
+        or ALIBABACLOUD_MCP_ACTION_RE.fullmatch(tool_name)
+    )
 
 
 def _is_alibabacloud_inner_tool(tool_name: str, tool_input: dict[str, Any]) -> bool:
     """Recognize our tools without depending on a client's private wrapper name."""
-    lowered = tool_name.lower()
-    if "alibabacloud" in lowered or "alibaba_cloud" in lowered:
+    if is_alibabacloud_mcp_tool_name(tool_name):
         return True
     if tool_name in {"Skill", "skill"}:
         skill = tool_input.get("skill") or ""
@@ -81,18 +97,15 @@ def _unwrap_client_tool(tool_name: str, tool_input: Any) -> tuple[str, Any]:
     inner_name = tool_input.get("toolName") or tool_input.get("tool_name") or ""
     if not isinstance(inner_name, str) or not inner_name:
         return tool_name, tool_input
+    if re.search(r"(?:^|__)qw_mcp_get$", tool_name, re.IGNORECASE):
+        return tool_name, tool_input
     raw_inner_input = tool_input.get("arguments")
     if tool_name not in QODERWORK_MCP_WRAPPERS:
-        if (
-            "alibabacloud" in tool_name.lower()
-            or "alibaba_cloud" in tool_name.lower()
-        ):
+        if is_alibabacloud_mcp_tool_name(tool_name):
             return tool_name, tool_input
         # Metadata lookup wrappers are not actual invocations. Other wrapper
         # names are deliberately treated as opaque unless their inner payload
         # independently proves that the operation belongs to this plugin.
-        if re.search(r"(?:^|__)qw_mcp_get$", tool_name, re.IGNORECASE):
-            return tool_name, tool_input
         if not isinstance(raw_inner_input, dict):
             return tool_name, tool_input
         if not _is_alibabacloud_inner_tool(inner_name, raw_inner_input):

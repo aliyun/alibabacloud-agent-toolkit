@@ -180,6 +180,18 @@ class ToolNormalizationTests(unittest.TestCase):
             ),
         )
 
+    def test_does_not_unwrap_plain_qoderwork_metadata_lookup(self) -> None:
+        tool_input = {
+            "toolName": (
+                "mcp__alibabacloud-core__AlibabaCloud___GetApiDefinition"
+            ),
+            "arguments": {},
+        }
+        self.assertEqual(
+            ("qw_mcp_get", tool_input),
+            self.normalization.normalize_tool_call("qw_mcp_get", tool_input),
+        )
+
     def test_unwraps_private_client_prefix_when_inner_mcp_tool_is_ours(self) -> None:
         for action in ("CallCLI", "RunIaC", "RunScript"):
             with self.subTest(action=action):
@@ -224,17 +236,53 @@ class ToolNormalizationTests(unittest.TestCase):
         self.assertIsNone(reason)
         self.assertEqual("skill_invocation", seed["event_type"])
 
-    def test_does_not_unwrap_private_wrapper_for_unrelated_inner_tool(self) -> None:
+    def test_unwraps_private_client_wrapper_for_alibabacloud_agent(self) -> None:
         tool_input = {
-            "toolName": "mcp__other-cloud__DeleteEverything",
-            "arguments": {"resource": "example"},
+            "toolName": "Agent",
+            "arguments": {"subagent_type": "alibabacloud-spec-ops:planner"},
         }
-        self.assertEqual(
-            ("private_client_tool_proxy", tool_input),
-            self.normalization.normalize_tool_call(
-                "private_client_tool_proxy", tool_input
-            ),
+        normalized = self.normalization.normalize_tool_call(
+            "private_client_tool_proxy", tool_input
         )
+        seed, reason, _ = post_handler.classify_with_reason(*normalized)
+        self.assertIsNone(reason)
+        self.assertEqual("subagent_dispatch", seed["event_type"])
+
+    def test_unwraps_private_client_wrapper_for_aliyun_bash(self) -> None:
+        tool_input = {
+            "toolName": "Bash",
+            "arguments": {"command": "aliyun ecs DescribeInstances"},
+        }
+        normalized = self.normalization.normalize_tool_call(
+            "private_client_tool_proxy", tool_input
+        )
+        seed, reason, _ = post_handler.classify_with_reason(*normalized)
+        self.assertIsNone(reason)
+        self.assertEqual("cli_command_use", seed["event_type"])
+
+    def test_does_not_unwrap_private_wrapper_for_unrelated_inner_tool(self) -> None:
+        for inner_name in (
+            "mcp__other-cloud__DeleteEverything",
+            "mcp__third-party-docs__SearchAlibabaCloudDocs",
+            "mcp__third-party__notalibabacloud",
+        ):
+            with self.subTest(inner_name=inner_name):
+                tool_input = {
+                    "toolName": inner_name,
+                    "arguments": {"query": "internal-project-customer-42"},
+                }
+                self.assertEqual(
+                    ("private_client_tool_proxy", tool_input),
+                    self.normalization.normalize_tool_call(
+                        "private_client_tool_proxy", tool_input
+                    ),
+                )
+                self.assertFalse(pre_handler.is_ours_tool(inner_name, {}))
+                seed, reason, _ = post_handler.classify_with_reason(
+                    inner_name, tool_input["arguments"]
+                )
+                self.assertIsNone(seed)
+                self.assertEqual("unknown-tool", reason)
 
     def test_does_not_double_unwrap_direct_alibabacloud_tool(self) -> None:
         tool_input = {

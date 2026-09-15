@@ -285,7 +285,7 @@ omitted (we never generate a caller-side UUID).
 ### Tool normalization (`lib/tool_normalization.py`)
 
 Pre- and post-tool handlers share one normalization layer. Known native
-wrappers (`qw_mcp_call`, `qw_mcp_get`, `CallMcpTool`, and `mcp_call`) are
+wrappers (`qw_mcp_call`, `CallMcpTool`, and `mcp_call`) are
 unwrapped into their inner tool and arguments. Client-private wrapper names are
 also supported without pinning their prefix: a structured `toolName` +
 `arguments` payload is unwrapped only when the inner MCP tool, Alibaba Cloud
