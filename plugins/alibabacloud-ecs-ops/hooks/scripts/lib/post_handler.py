@@ -27,6 +27,8 @@ from state import SessionState  # noqa: E402
 import trace_writer  # noqa: E402
 from tool_normalization import (  # noqa: E402
     ALIYUN_INVOCATION_RE,
+    is_alibabacloud_identifier,
+    is_alibabacloud_mcp_tool_name,
     normalize_tool_call,
 )
 
@@ -42,6 +44,14 @@ def _sanitize_client(name: str) -> str:
     identical per-client state directory on both sides."""
     raw = (name or "").encode("utf-8", "replace")
     return re.sub(rb"[^A-Za-z0-9_-]", b"_", raw)[:64].decode("ascii")
+
+
+def _is_callcli_mcp_tool(mcp_tool: str) -> bool:
+    """Recognize CallCLI independently of host-provided casing."""
+    return (
+        isinstance(mcp_tool, str)
+        and mcp_tool.casefold() == "alibabacloud___callcli"
+    )
 
 
 def _qoder_family_client() -> str | None:
@@ -60,7 +70,7 @@ def _qoder_family_client() -> str | None:
     if product_id in {"qoder", "qoder-cn"}:
         return "qoder"
     if (os.environ.get("VSCODE_BRAND") or "").lower() == "qoder":
-        return "qoder"
+        return "qoder-ide"
     if os.environ.get("QODER_AGENT") == "true":
         source = os.environ.get("QODER_HOOK_SOURCE") or ""
         ide = os.environ.get("QODER_IDE") or ""
@@ -110,10 +120,13 @@ def _sanitize_tool_name(tool_name: str) -> str:
 
 
 SKILLS_PATH_RE = re.compile(
-    r"(?P<plugin>alibabacloud[-_a-zA-Z0-9]*)/[^/]*?/?skills/(?P<skill>[^/]+)/(?P<rest>.+)$"
+    r"(?:^|/)(?P<plugin>alibabacloud(?:[-_][A-Za-z0-9]+)*)/"
+    r"(?:[^/]+/)?skills/(?P<skill>[^/]+)/(?P<rest>.+)$"
 )
 SKILL_FILE_RE = re.compile(r"/skills/(?P<skill>[A-Za-z0-9_-]+)/SKILL\.md\b")
-PLUGIN_FROM_PATH_RE = re.compile(r"/(?P<plugin>alibabacloud[-_a-zA-Z0-9]*)/")
+PLUGIN_FROM_PATH_RE = re.compile(
+    r"(?:^|/)(?P<plugin>alibabacloud(?:[-_][A-Za-z0-9]+)*)(?=/)"
+)
 # Skills set ALIBABA_CLOUD_USER_AGENT=AlibabaCloud-Agent-Skills/<skill>[/...]
 # on every aliyun call they emit. Captures the skill name regardless of where
 # in the bash command line it appears (env prefix, `export`, etc.).
@@ -147,7 +160,7 @@ def _path_skill_tag(tool_input: Any) -> Optional[str]:
             continue
         plugin = m.group("plugin") or ""
         skill = m.group("skill") or ""
-        if plugin and skill and PLUGIN_PREFIX in plugin.lower():
+        if plugin and skill:
             return f"{plugin}:{skill}"
     # Case 2: User-Agent based detection on bash commands.
     cmd = tool_input.get("command")
@@ -244,7 +257,7 @@ def classify_with_reason(
         skill = ""
         if isinstance(tool_input, dict):
             skill = tool_input.get("skill", "") or ""
-        if not isinstance(skill, str) or not skill.lower().startswith(PLUGIN_PREFIX):
+        if not is_alibabacloud_identifier(skill):
             return None, "non-alibabacloud-skill", extra
         # Claude/QoderWork pass "<plugin>:<skill>" in the Skill tool input;
         # store skill_name as the bare skill so the viewer's
@@ -264,7 +277,7 @@ def classify_with_reason(
         sub = ""
         if isinstance(tool_input, dict):
             sub = tool_input.get("subagent_type", "") or ""
-        if not isinstance(sub, str) or not sub.lower().startswith(PLUGIN_PREFIX):
+        if not is_alibabacloud_identifier(sub):
             return None, "non-alibabacloud-subagent", extra
         if ":" in sub:
             plugin, _, sub_only = sub.partition(":")
@@ -286,7 +299,7 @@ def classify_with_reason(
                 or tool_input.get("path")
                 or ""
             )
-        if not isinstance(path, str) or PLUGIN_PREFIX not in path.lower():
+        if not isinstance(path, str):
             return None, "read-no-alibabacloud-segment", extra
         m = SKILLS_PATH_RE.search(path.replace("\\", "/"))
         if not m:
@@ -318,7 +331,7 @@ def classify_with_reason(
             if m_skill:
                 m_plugin = PLUGIN_FROM_PATH_RE.search(cmd)
                 plugin = m_plugin.group("plugin") if m_plugin else ""
-                if plugin and PLUGIN_PREFIX in plugin.lower():
+                if plugin:
                     return {
                         "event_type": "skill_invocation",
                         "skill_name": m_skill.group("skill"),
@@ -340,12 +353,18 @@ def classify_with_reason(
         return None, "bash-not-aliyun", extra
 
     # 5. MCP tool (alibabacloud-* MCP server)
-    lowered = tool_name.lower()
-    if PLUGIN_PREFIX in lowered or "alibabacloud___" in lowered:
+    if is_alibabacloud_mcp_tool_name(tool_name):
         seed = {"event_type": "mcp_tool_use"}
-        m = re.search(r"AlibabaCloud(?:___(?!_)|_(?!_))(\w+)", tool_name)
+        m = re.search(
+            r"AlibabaCloud(?:___(?!_)|_(?!_))(\w+)",
+            tool_name,
+            re.IGNORECASE,
+        )
         if m:
-            seed["mcp_tool"] = f"AlibabaCloud___{m.group(1)}"
+            action = m.group(1)
+            if action.casefold() == "callcli":
+                action = "CallCLI"
+            seed["mcp_tool"] = f"AlibabaCloud___{action}"
         # Extract plugin from name like mcp__plugin_<plugin>_<plugin>__*
         m2 = re.search(r"mcp__plugin_(alibabacloud[-_a-z0-9]+?)_", tool_name, re.IGNORECASE)
         if m2:
@@ -362,7 +381,7 @@ def classify_with_reason(
         #   - Others:   whole tool_input as compact JSON via sanitize_tool_input
         if isinstance(tool_input, dict):
             mcp_tool = seed.get("mcp_tool", "")
-            if mcp_tool.endswith("CallCLI"):
+            if _is_callcli_mcp_tool(mcp_tool):
                 cmd = tool_input.get("command", "") or ""
                 if cmd:
                     seed["cli_command"] = sanitize.sanitize_aliyun_cli(cmd)
@@ -643,6 +662,10 @@ def _scan_dict_for_error(d: dict) -> Optional[str]:
             or str(d.get("Error") or "")
         )
         if code:
+            if isinstance(code, (int, float)) and not isinstance(code, bool):
+                # Preserve the JSON-RPC shape expected by classify_error;
+                # returning "-32603: ..." loses the structured MCP class.
+                return json.dumps({"code": code}, separators=(",", ":"))
             return f"{code}: {detail}" if detail else str(code)
         return str(detail) if detail else "error"
     status = d.get("status")
@@ -660,8 +683,13 @@ def detect_status(data: dict) -> tuple[str, str]:
     tool_response = data.get("tool_response") or {}
     tool_error = data.get("tool_error") or data.get("error") or ""
     tool_result = data.get("tool_result", "")
-    if not tool_result and isinstance(tool_response, dict):
-        tool_result = tool_response.get("stdout", "") or ""
+    if not tool_result:
+        if isinstance(tool_response, dict):
+            tool_result = tool_response.get("stdout", "") or ""
+        elif isinstance(tool_response, str):
+            # Qoder-family MCP wrappers return their full result envelope as
+            # a JSON string in tool_response rather than tool_result.
+            tool_result = tool_response
 
     def _result_message(plain_fallback: bool = False) -> str:
         """Extract the most informative error message from tool_result.
@@ -915,7 +943,7 @@ def main() -> int:
     if not event_tag:
         event_type = seed.get("event_type", "")
         mcp_tool = seed.get("mcp_tool", "")
-        if event_type == "mcp_tool_use" and mcp_tool.endswith("CallCLI"):
+        if event_type == "mcp_tool_use" and _is_callcli_mcp_tool(mcp_tool):
             event_tag = "mcp_callcli"
         elif event_type == "mcp_tool_use":
             event_tag = "mcp_tool_use"

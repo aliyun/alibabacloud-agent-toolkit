@@ -172,7 +172,7 @@ export ALIBABACLOUD_TELEMETRY=false
 | `QODER_WORK_INTEGRATION_MODE`       | unset                                                  | Set to `1` by Qoder-family hosts running in integration mode. On its own it still resolves to `qoderwork`. |
 | `QODER_WORK_INTEGRATION_PRODUCT`    | unset                                                  | Highest-priority Qoder-family marker: when non-empty its value becomes the client name verbatim (sanitized), e.g. `qwenworkcn`. |
 | `QODER_PRODUCT_ID`                  | unset                                                  | New Qoder sets `qoder` or `qoder-cn`; both resolve to the stable client name `qoder`. |
-| `VSCODE_BRAND`                      | unset                                                  | Qoder IDE sets `Qoder`; this resolves to `qoder` even though the shared hook command also sets `QODER_WORK=1`. |
+| `VSCODE_BRAND`                      | unset                                                  | Qoder IDE sets `Qoder`; this resolves to `qoder-ide` even though the shared hook command also sets `QODER_WORK=1`. |
 | `QODER_AGENT`                       | unset                                                  | Set to `true` by qodercli / qoderIDE. Combined with the two vars below it resolves to `qoder_<QODER_HOOK_SOURCE>_<QODER_IDE>`. |
 | `QODER_HOOK_SOURCE`                 | unset                                                  | Hook origin reported by a `QODER_AGENT=true` host, e.g. `cli`. Required together with `QODER_IDE`; if either is missing the client falls back to `qoderwork`. |
 | `QODER_IDE`                         | unset                                                  | IDE/workspace discriminator reported by a `QODER_AGENT=true` host, e.g. `0`. Required together with `QODER_HOOK_SOURCE`. |
@@ -284,9 +284,16 @@ omitted (we never generate a caller-side UUID).
 
 ### Tool normalization (`lib/tool_normalization.py`)
 
-Pre- and post-tool handlers share one normalization layer. Native Qoder-family
-wrappers (`qw_mcp_call`, `qw_mcp_get`, `CallMcpTool`, and New Qoder's
-`mcp_call`) are unwrapped into their inner MCP tool and arguments. A Bash
+Pre- and post-tool handlers share one normalization layer. Known native
+wrappers (`qw_mcp_call`, `CallMcpTool`, and `mcp_call`) are
+unwrapped into their inner tool and arguments. Client-private wrapper names are
+also supported without pinning their prefix: a structured `toolName` +
+`arguments` payload is unwrapped only for the operational MCP actions
+`CallCLI`, `RunIaC`, and `RunScript`, or when an Alibaba Cloud skill or
+skill-file read independently proves plugin ownership. Known native wrappers
+retain support for all directly owned Alibaba Cloud MCP actions. The
+namespaced Qoder Work metadata lookup and unrelated third-party tools remain
+filtered. A Bash
 command that invokes `mcpx.py call
 CallCLI` with a JSON request containing an `aliyun` command is normalized to
 `AlibabaCloud___CallCLI`; this covers connector-based QwenWork calls while
@@ -303,7 +310,7 @@ Four functions, all bounded:
   - `/Users/<name>/`, `/home/<name>/`, `C:\Users\<name>\` → `/<USER>/`
   - Email, CN mobile, IPv4, UUID v4 → `<REDACTED>`
 - `sanitize_cli(cmd)` — legacy helper: keeps the first 3 whitespace-separated tokens, capped at 120 chars (drops args / values that may carry IDs). Not used by the current event pipeline.
-- `sanitize_aliyun_cli(cmd)` — used for `cli_command_use` (Bash `aliyun ...`) and MCP `AlibabaCloud___CallCLI`. Keeps the full command verbatim (operational context for Alibaba Cloud audit) and strips only credential flags + values: `--access-key-id`, `--access-key-secret`, `--secret`, `--secret-key`, `--password`, `--passwd`, `--sts-token`, `--security-token` (both `--flag value` and `--flag=value` forms). Also drops bare `LTAI*` / `STS.*` / JWT tokens as defense-in-depth. Capped at 2000 chars. `--endpoint`, `--endpoint-url`, and `--profile` are intentionally kept — they are operational context, not secrets.
+- `sanitize_aliyun_cli(cmd)` — used for `cli_command_use` (Bash `aliyun ...`) and MCP `AlibabaCloud___CallCLI`. Keeps the operational command tokens and strips only credential flags + values: `--access-key-id`, `--access-key-secret`, `--secret`, `--secret-key`, `--password`, `--passwd`, `--sts-token`, `--security-token` (both `--flag value` and `--flag=value` forms). Shell quoting is parsed as data so multiword credential values are removed as one token; malformed quoting fails closed with no command text. The sanitizer also drops bare `LTAI*` / `STS.*` / JWT tokens as defense-in-depth. Output is capped at 2000 chars. `--endpoint`, `--endpoint-url`, and `--profile` are intentionally kept — they are operational context, not secrets.
 - `sanitize_tool_input(value)` — used for all **non-CallCLI** MCP `AlibabaCloud___*` tools (`ListProducts`, `ListApis`, `ListProductRegions`, `SearchApis`, `SearchDocuments`, `GetDocument`, `GetDocumentTree`, `GrepDocuments`, `GetApiDefinition`, `GenerateCLICommand`, …). JSON-serializes the `tool_input` dict (sorted keys, compact separators, UTF-8 safe) and runs the full `_CRED_PATTERNS` set against the serialized string (AccessKey / STS / JWT / PEM / Bearer / long base64 blobs → `***`). Capped at 4000 chars. The serialized JSON is uploaded via the same `--cli-command` flag (it carries either a shell command for CallCLI, or a JSON-encoded tool input for other MCP tools — distinguish by `--mcp-tool`).
 
 ### Bounds
@@ -579,7 +586,7 @@ the environment the host injects:
 1. `QODER_WORK_INTEGRATION_PRODUCT` non-empty → that value, e.g. `qwenworkcn`
    for 千问办公中国版
 2. else `QODER_PRODUCT_ID=qoder|qoder-cn` → `qoder` for New Qoder
-3. else `VSCODE_BRAND=Qoder` → `qoder` for Qoder IDE
+3. else `VSCODE_BRAND=Qoder` → `qoder-ide` for Qoder IDE
 4. else `QODER_AGENT=true` with both `QODER_HOOK_SOURCE` and `QODER_IDE`
    non-empty → `qoder_<QODER_HOOK_SOURCE>_<QODER_IDE>`, e.g. `qoder_cli_0`
 5. else → `qoderwork`, the legacy default that `QODER_WORK=1` alone yields

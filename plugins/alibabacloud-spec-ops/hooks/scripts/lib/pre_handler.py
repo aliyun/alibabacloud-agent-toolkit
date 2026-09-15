@@ -12,6 +12,7 @@ import os
 import re
 import sys
 import time
+import uuid
 
 # Make sibling modules importable when run directly
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -19,10 +20,12 @@ from state import SessionState  # noqa: E402
 import trace_writer  # noqa: E402
 from tool_normalization import (  # noqa: E402
     ALIYUN_INVOCATION_RE,
+    is_alibabacloud_identifier,
+    is_alibabacloud_mcp_tool_name,
+    is_alibabacloud_skill_path,
     normalize_tool_call,
 )
 
-PLUGIN_PREFIX = "alibabacloud"
 STDIN_CAP = 65536
 def read_stdin_bounded() -> bytes:
     return sys.stdin.buffer.read(STDIN_CAP)
@@ -32,20 +35,19 @@ def is_ours_tool(tool_name: str, tool_input) -> bool:
     """Return True when this tool call concerns one of our plugins."""
     if not tool_name:
         return False
-    lower = tool_name.lower()
-    if PLUGIN_PREFIX in lower:
+    if is_alibabacloud_mcp_tool_name(tool_name):
         return True
     if tool_name in ("Skill", "skill"):
         skill = ""
         if isinstance(tool_input, dict):
             skill = tool_input.get("skill", "") or ""
-        if isinstance(skill, str) and PLUGIN_PREFIX in skill.lower():
+        if is_alibabacloud_identifier(skill):
             return True
     if tool_name in ("Agent", "agent"):
         sub = ""
         if isinstance(tool_input, dict):
             sub = tool_input.get("subagent_type", "") or ""
-        if isinstance(sub, str) and PLUGIN_PREFIX in sub.lower():
+        if is_alibabacloud_identifier(sub):
             return True
     if tool_name == "Bash":
         cmd = ""
@@ -54,7 +56,9 @@ def is_ours_tool(tool_name: str, tool_input) -> bool:
         if isinstance(cmd, str):
             if ALIYUN_INVOCATION_RE.search(cmd):
                 return True
-            if re.search(r"/skills/[A-Za-z0-9_-]+/SKILL\.md\b", cmd) and PLUGIN_PREFIX in cmd.lower():
+            if is_alibabacloud_skill_path(cmd) and re.search(
+                r"/skills/[A-Za-z0-9_-]+/SKILL\.md\b", cmd
+            ):
                 return True
     return False
 
@@ -115,7 +119,7 @@ def _qoder_family_client() -> str | None:
     if product_id in {"qoder", "qoder-cn"}:
         return "qoder"
     if (os.environ.get("VSCODE_BRAND") or "").lower() == "qoder":
-        return "qoder"
+        return "qoder-ide"
     if os.environ.get("QODER_AGENT") == "true":
         source = os.environ.get("QODER_HOOK_SOURCE") or ""
         ide = os.environ.get("QODER_IDE") or ""
@@ -191,48 +195,56 @@ def main() -> int:
     unique_span_key = tool_use_id or key
     try:
         with SessionState(client, session_id) as st:
-            st.data["tool_starts"][key] = int(time.time() * 1000)
-            # --- Local trace: mark turn active, get parent span ---
-            if trace_writer.trace_enabled():
-                st.data["turn_has_trace"] = True
-                # Dedup: Claude fires PreToolUse twice for the same
-                # tool_use_id within one turn (symmetric with the
-                # PostToolUse dedup via posted_tool_use_ids). Skip the
-                # second fire so we neither write a duplicate tool_start
-                # event nor a duplicate turn_spans entry.
-                # When tool_use_id is present, it uniquely identifies a
-                # call so repeated fires of the same ID are true duplicates.
-                # When tool_use_id is absent (e.g. qoderwork), each fire is
-                # a distinct call — use a monotonic seq to avoid false dedup.
-                if tool_use_id:
-                    dedup_key = tool_use_id
-                else:
-                    _seq = st.data.get("_pre_seq", 0) + 1
-                    st.data["_pre_seq"] = _seq
-                    dedup_key = f"{tool_name}:{_seq}"
-                    unique_span_key = dedup_key
-                pre_seen = st.data.setdefault("pre_seen_ids", [])
-                if dedup_key in pre_seen:
-                    is_duplicate = True
-                else:
-                    pre_seen.append(dedup_key)
-                    if len(pre_seen) > 500:
-                        pre_seen[:] = pre_seen[-500:]
-                    # All tool spans parent directly to the prompt span.
-                    # Skill association is content-based — see post_handler
-                    # ._path_skill_tag (matches the bash command's UA env
-                    # or skills/<name>/ path) — never inferred from temporal
-                    # proximity within a turn.
-                    parent_span = st.data.get("prompt_span_id")
-                    turn = int(st.data.get("turn", 0))
-                    # Record this span for end-of-turn token aggregation
-                    st.data.setdefault("turn_spans", []).append({
-                        "span_id": unique_span_key,
-                        "parent_span_id": parent_span,
-                        "kind": "tool",
-                        "tool_use_id": tool_use_id,
-                        "tool_name": tool_name,
-                    })
+            now_ms = int(time.time() * 1000)
+            st.data["tool_starts"][key] = now_ms
+            st.data["turn_has_trace"] = True
+            # Some Qoder-family hosts do not fire UserPromptSubmit. Create
+            # the turn root at the first tracked Alibaba Cloud tool so tool,
+            # LLM-call, and turn events still share a stable parent span.
+            if not st.data.get("prompt_span_id"):
+                st.data["prompt_span_id"] = uuid.uuid4().hex[:16]
+                st.data["pending_prompt_ts"] = now_ms
+            # Dedup: Claude fires PreToolUse twice for the same
+            # tool_use_id within one turn (symmetric with the
+            # PostToolUse dedup via posted_tool_use_ids). Skip the
+            # second fire so we neither write a duplicate tool_start
+            # event nor a duplicate turn_spans entry.
+            # When tool_use_id is present, it uniquely identifies a
+            # call so repeated fires of the same ID are true duplicates.
+            # When tool_use_id is absent (e.g. qoderwork), each fire is
+            # a distinct call — use a monotonic seq to avoid false dedup.
+            if tool_use_id:
+                dedup_key = tool_use_id
+            else:
+                _seq = st.data.get("_pre_seq", 0) + 1
+                st.data["_pre_seq"] = _seq
+                dedup_key = f"{tool_name}:{_seq}"
+                unique_span_key = dedup_key
+            pre_seen = st.data.setdefault("pre_seen_ids", [])
+            if dedup_key in pre_seen:
+                is_duplicate = True
+            else:
+                pre_seen.append(dedup_key)
+                if len(pre_seen) > 500:
+                    pre_seen[:] = pre_seen[-500:]
+                # All tool spans parent directly to the prompt span.
+                # Skill association is content-based — see post_handler
+                # ._path_skill_tag (matches the bash command's UA env
+                # or skills/<name>/ path) — never inferred from temporal
+                # proximity within a turn.
+                parent_span = st.data.get("prompt_span_id")
+                turn = int(st.data.get("turn", 0))
+                # Record this span for end-of-turn token aggregation.
+                # This state is also needed by remote telemetry when local
+                # trace writing is disabled, so it is intentionally not
+                # gated by trace_writer.trace_enabled().
+                st.data.setdefault("turn_spans", []).append({
+                    "span_id": unique_span_key,
+                    "parent_span_id": parent_span,
+                    "kind": "tool",
+                    "tool_use_id": tool_use_id,
+                    "tool_name": tool_name,
+                })
     except Exception:
         pass
 

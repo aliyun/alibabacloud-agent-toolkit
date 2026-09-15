@@ -41,7 +41,7 @@ qoder_family_client_bash() {
         [Qq][Oo][Dd][Ee][Rr]|[Qq][Oo][Dd][Ee][Rr]-[Cc][Nn]) echo "qoder"; return 0 ;;
     esac
     case "${VSCODE_BRAND:-}" in
-        [Qq][Oo][Dd][Ee][Rr]) echo "qoder"; return 0 ;;
+        [Qq][Oo][Dd][Ee][Rr]) echo "qoder-ide"; return 0 ;;
     esac
     if [ "${QODER_AGENT:-}" = "true" ]; then
         local hookSource="${QODER_HOOK_SOURCE:-}"
