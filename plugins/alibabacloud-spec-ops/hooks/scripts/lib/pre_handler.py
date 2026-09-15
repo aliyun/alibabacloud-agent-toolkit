@@ -21,10 +21,10 @@ from tool_normalization import (  # noqa: E402
     ALIYUN_INVOCATION_RE,
     is_alibabacloud_identifier,
     is_alibabacloud_mcp_tool_name,
+    is_alibabacloud_skill_path,
     normalize_tool_call,
 )
 
-PLUGIN_PREFIX = "alibabacloud"
 STDIN_CAP = 65536
 def read_stdin_bounded() -> bytes:
     return sys.stdin.buffer.read(STDIN_CAP)
@@ -55,7 +55,9 @@ def is_ours_tool(tool_name: str, tool_input) -> bool:
         if isinstance(cmd, str):
             if ALIYUN_INVOCATION_RE.search(cmd):
                 return True
-            if re.search(r"/skills/[A-Za-z0-9_-]+/SKILL\.md\b", cmd) and PLUGIN_PREFIX in cmd.lower():
+            if is_alibabacloud_skill_path(cmd) and re.search(
+                r"/skills/[A-Za-z0-9_-]+/SKILL\.md\b", cmd
+            ):
                 return True
     return False
 

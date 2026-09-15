@@ -288,8 +288,10 @@ Pre- and post-tool handlers share one normalization layer. Known native
 wrappers (`qw_mcp_call`, `CallMcpTool`, and `mcp_call`) are
 unwrapped into their inner tool and arguments. Client-private wrapper names are
 also supported without pinning their prefix: a structured `toolName` +
-`arguments` payload is unwrapped only when the inner MCP tool, Alibaba Cloud
-skill/agent, or skill-file read independently proves plugin ownership. The
+`arguments` payload is unwrapped only for the operational MCP actions
+`CallCLI`, `RunIaC`, and `RunScript`, or when an Alibaba Cloud skill or
+skill-file read independently proves plugin ownership. Known native wrappers
+retain support for all directly owned Alibaba Cloud MCP actions. The
 namespaced Qoder Work metadata lookup and unrelated third-party tools remain
 filtered. A Bash
 command that invokes `mcpx.py call

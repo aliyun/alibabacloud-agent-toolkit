@@ -43,6 +43,11 @@ ALIBABACLOUD_SKILLS_PATH_RE = re.compile(
     r"(?:^|/)alibabacloud(?:[-_][A-Za-z0-9]+)*/(?:[^/]+/)?skills/",
     re.IGNORECASE,
 )
+PRIVATE_WRAPPER_MCP_ACTION_RE = re.compile(
+    r"(?:^|__)AlibabaCloud(?:___(?!_)|_(?!_))(?P<action>[A-Za-z0-9_]+)$",
+    re.IGNORECASE,
+)
+PRIVATE_WRAPPER_MCP_ACTIONS = frozenset({"callcli", "runiac", "runscript"})
 
 
 def is_alibabacloud_mcp_tool_name(tool_name: str) -> bool:
@@ -67,16 +72,23 @@ def is_alibabacloud_skill_path(value: str) -> bool:
     return bool(ALIBABACLOUD_SKILLS_PATH_RE.search(value.replace("\\", "/")))
 
 
+def _is_allowed_private_mcp_tool(tool_name: str) -> bool:
+    """Allow only stable operational actions through an unknown wrapper."""
+    if not is_alibabacloud_mcp_tool_name(tool_name):
+        return False
+    match = PRIVATE_WRAPPER_MCP_ACTION_RE.search(tool_name)
+    return bool(
+        match and match.group("action").casefold() in PRIVATE_WRAPPER_MCP_ACTIONS
+    )
+
+
 def _is_alibabacloud_inner_tool(tool_name: str, tool_input: dict[str, Any]) -> bool:
     """Recognize our tools without depending on a client's private wrapper name."""
-    if is_alibabacloud_mcp_tool_name(tool_name):
+    if _is_allowed_private_mcp_tool(tool_name):
         return True
     if tool_name in {"Skill", "skill"}:
         skill = tool_input.get("skill") or ""
         return is_alibabacloud_identifier(skill)
-    if tool_name in {"Agent", "agent"}:
-        subagent = tool_input.get("subagent_type") or ""
-        return is_alibabacloud_identifier(subagent)
     if tool_name in {"Read", "view", "read_file"}:
         path = (
             tool_input.get("file_path")
@@ -89,10 +101,7 @@ def _is_alibabacloud_inner_tool(tool_name: str, tool_input: dict[str, Any]) -> b
         command = tool_input.get("command") or ""
         if not isinstance(command, str):
             return False
-        return bool(
-            ALIYUN_INVOCATION_RE.search(command)
-            or is_alibabacloud_skill_path(command)
-        )
+        return is_alibabacloud_skill_path(command)
     return False
 
 

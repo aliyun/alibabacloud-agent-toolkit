@@ -194,7 +194,7 @@ class ToolNormalizationTests(unittest.TestCase):
         )
 
     def test_unwraps_private_client_prefix_when_inner_mcp_tool_is_ours(self) -> None:
-        for action in ("CallCLI", "RunIaC", "RunScript"):
+        for action in ("CallCLI", "runiac", "RuNsCrIp"):
             with self.subTest(action=action):
                 tool_input = {
                     "toolName": (
@@ -237,29 +237,61 @@ class ToolNormalizationTests(unittest.TestCase):
         self.assertIsNone(reason)
         self.assertEqual("skill_invocation", seed["event_type"])
 
-    def test_unwraps_private_client_wrapper_for_alibabacloud_agent(self) -> None:
+    def test_unwraps_private_client_wrapper_for_alibabacloud_skill_file_bash(self) -> None:
+        tool_input = {
+            "toolName": "Bash",
+            "arguments": {
+                "command": (
+                    "sed -n '1,20p' "
+                    "/tmp/plugins/alibabacloud-core/skills/example/SKILL.md"
+                )
+            },
+        }
+        normalized = self.normalization.normalize_tool_call(
+            "private_client_tool_proxy", tool_input
+        )
+        self.assertEqual(("Bash", tool_input["arguments"]), normalized)
+        self.assertTrue(pre_handler.is_ours_tool(*normalized))
+
+    def test_does_not_unwrap_unknown_private_wrapper_for_agent(self) -> None:
         tool_input = {
             "toolName": "Agent",
             "arguments": {"subagent_type": "alibabacloud-spec-ops:planner"},
         }
-        normalized = self.normalization.normalize_tool_call(
-            "private_client_tool_proxy", tool_input
+        self.assertEqual(
+            ("private_client_tool_proxy", tool_input),
+            self.normalization.normalize_tool_call(
+                "private_client_tool_proxy", tool_input
+            ),
         )
-        seed, reason, _ = post_handler.classify_with_reason(*normalized)
-        self.assertIsNone(reason)
-        self.assertEqual("subagent_dispatch", seed["event_type"])
 
-    def test_unwraps_private_client_wrapper_for_aliyun_bash(self) -> None:
+    def test_does_not_unwrap_unknown_private_wrapper_for_aliyun_bash(self) -> None:
         tool_input = {
             "toolName": "Bash",
             "arguments": {"command": "aliyun ecs DescribeInstances"},
         }
-        normalized = self.normalization.normalize_tool_call(
-            "private_client_tool_proxy", tool_input
+        self.assertEqual(
+            ("private_client_tool_proxy", tool_input),
+            self.normalization.normalize_tool_call(
+                "private_client_tool_proxy", tool_input
+            ),
         )
-        seed, reason, _ = post_handler.classify_with_reason(*normalized)
-        self.assertIsNone(reason)
-        self.assertEqual("cli_command_use", seed["event_type"])
+
+    def test_does_not_unwrap_unknown_private_wrapper_for_other_owned_mcp_actions(self) -> None:
+        for action in ("GetApiDefinition", "DeleteEverything"):
+            with self.subTest(action=action):
+                tool_input = {
+                    "toolName": (
+                        "mcp__alibabacloud-core__AlibabaCloud___" + action
+                    ),
+                    "arguments": {"query": "example"},
+                }
+                self.assertEqual(
+                    ("private_client_tool_proxy", tool_input),
+                    self.normalization.normalize_tool_call(
+                        "private_client_tool_proxy", tool_input
+                    ),
+                )
 
     def test_does_not_unwrap_private_wrapper_for_unrelated_inner_tool(self) -> None:
         for inner_name in (
@@ -331,6 +363,10 @@ class ToolNormalizationTests(unittest.TestCase):
                     "Read", arguments
                 )
                 self.assertIsNone(seed)
+                command = f"sed -n '1p' {arguments['file_path']}"
+                self.assertFalse(
+                    pre_handler.is_ours_tool("Bash", {"command": command})
+                )
 
     def test_does_not_double_unwrap_direct_alibabacloud_tool(self) -> None:
         tool_input = {
@@ -492,6 +528,28 @@ class ToolNormalizationTests(unittest.TestCase):
                     self.assertTrue(
                         post_handler._is_callcli_mcp_tool(seed["mcp_tool"])
                     )
+
+    def test_callcli_suffix_collisions_use_generic_sensitive_input_sanitizer(self) -> None:
+        sensitive_values = (
+            "Bearer reviewer-token-value",
+            "-----BEGIN PRIVATE KEY-----reviewer-key-----END PRIVATE KEY-----",
+            "A" * 64,
+        )
+        for action in ("NotCallCLI", "RecallCLI", "CallCLIExtra"):
+            for sensitive in sensitive_values:
+                with self.subTest(action=action, sensitive=sensitive[:12]):
+                    seed, reason, _ = post_handler.classify_with_reason(
+                        (
+                            "mcp__alibabacloud-core__AlibabaCloud___"
+                            + action
+                        ),
+                        {"command": sensitive},
+                    )
+                    self.assertIsNone(reason)
+                    self.assertFalse(
+                        post_handler._is_callcli_mcp_tool(seed["mcp_tool"])
+                    )
+                    self.assertNotIn(sensitive, seed["cli_command"])
 
     def test_slash_skill_rejects_identifier_prefix_collision(self) -> None:
         self.assertIsNone(

@@ -48,7 +48,10 @@ def _sanitize_client(name: str) -> str:
 
 def _is_callcli_mcp_tool(mcp_tool: str) -> bool:
     """Recognize CallCLI independently of host-provided casing."""
-    return isinstance(mcp_tool, str) and mcp_tool.casefold().endswith("callcli")
+    return (
+        isinstance(mcp_tool, str)
+        and mcp_tool.casefold() == "alibabacloud___callcli"
+    )
 
 
 def _qoder_family_client() -> str | None:
