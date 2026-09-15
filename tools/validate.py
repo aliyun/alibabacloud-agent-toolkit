@@ -439,6 +439,46 @@ def validate_copilot_hooks(plugin_dir: Path) -> None:
                 error(f"Hook command references missing file '{ref}' in {rel(path)}")
 
 
+def validate_qoder_manifest(plugin_dir: Path) -> None:
+    """Validate Qoder/QwenWork-specific manifest fields and paths."""
+    path = plugin_dir / ".qoder-plugin" / "plugin.json"
+    if not path.exists():
+        return
+    data = validate_json(path, ["name"])
+    if data is None or "agents" not in data:
+        return
+
+    raw_agents = data["agents"]
+    entries = raw_agents if isinstance(raw_agents, list) else [raw_agents]
+    plugin_root = plugin_dir.resolve()
+    for entry in entries:
+        if not isinstance(entry, str):
+            error(f"'agents' entries must be strings in {rel(path)}")
+            continue
+        if not entry.startswith("./") or Path(entry).is_absolute():
+            error(
+                f"Qoder agent path must be plugin-relative in {rel(path)}: "
+                f"{entry}"
+            )
+            continue
+        if Path(entry).suffix.lower() != ".md":
+            error(
+                f"Qoder agent path must end with .md in {rel(path)}: {entry}"
+            )
+            continue
+
+        resolved = (plugin_dir / entry).resolve()
+        if not resolved.is_relative_to(plugin_root):
+            error(
+                f"Qoder agent path escapes plugin root in {rel(path)}: {entry}"
+            )
+        elif not resolved.is_file():
+            error(
+                f"Qoder agent path is not an existing file in {rel(path)}: "
+                f"{entry}"
+            )
+
+
 def validate_version_consistency(plugin_dir: Path) -> None:
     """Every client manifest and the root marketplace entry must agree on version."""
     versions: dict[str, str] = {}
@@ -493,6 +533,10 @@ def validate_plugin(plugin_dir: Path) -> None:
         codex_manifest,
         ["name", "version", "description", "author", "interface"],
     )
+
+    # Qoder/QwenWork manifest uses stricter component path semantics than
+    # Claude Code. Keep these checks isolated to the Qoder manifest.
+    validate_qoder_manifest(plugin_dir)
 
     # MCP config
     mcp_path = plugin_dir / ".mcp.json"

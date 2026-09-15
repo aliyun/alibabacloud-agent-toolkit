@@ -198,6 +198,101 @@ class EcsManifestTests(unittest.TestCase):
         self.assertTrue(interface["defaultPrompt"])
 
 
+class QoderManifestTests(unittest.TestCase):
+    def setUp(self) -> None:
+        repo_validate.errors.clear()
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.plugin_dir = Path(self.temp_dir.name) / "example-plugin"
+        self.plugin_dir.mkdir()
+
+    def write_manifest(self, agents: object) -> Path:
+        path = self.plugin_dir / ".qoder-plugin/plugin.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"name": "example-plugin", "agents": agents}, indent=2),
+            encoding="utf-8",
+        )
+        return path
+
+    def errors_from_validator(self) -> list[str]:
+        validator = getattr(repo_validate, "validate_qoder_manifest", None)
+        self.assertIsNotNone(
+            validator, "validate_qoder_manifest must be implemented"
+        )
+        repo_validate.errors.clear()
+        with redirect_stderr(io.StringIO()):
+            validator(self.plugin_dir)
+        return list(repo_validate.errors)
+
+    def test_accepts_explicit_markdown_file_list(self) -> None:
+        agents = self.plugin_dir / "agents"
+        agents.mkdir()
+        (agents / "reviewer.md").write_text("reviewer\n", encoding="utf-8")
+        (agents / "planner.md").write_text("planner\n", encoding="utf-8")
+        self.write_manifest([
+            "./agents/reviewer.md",
+            "./agents/planner.md",
+        ])
+        self.assertEqual([], self.errors_from_validator())
+
+    def test_accepts_one_explicit_markdown_file_string(self) -> None:
+        agents = self.plugin_dir / "agents"
+        agents.mkdir()
+        (agents / "reviewer.md").write_text("reviewer\n", encoding="utf-8")
+        self.write_manifest("./agents/reviewer.md")
+        self.assertEqual([], self.errors_from_validator())
+
+    def test_rejects_agent_directory(self) -> None:
+        (self.plugin_dir / "agents").mkdir()
+        self.write_manifest("./agents/")
+        self.assertTrue(any(
+            "must end with .md" in error
+            for error in self.errors_from_validator()
+        ))
+
+    def test_rejects_missing_agent_file(self) -> None:
+        self.write_manifest("./agents/missing.md")
+        self.assertTrue(any(
+            "not an existing file" in error
+            for error in self.errors_from_validator()
+        ))
+
+    def test_rejects_absolute_agent_path(self) -> None:
+        self.write_manifest("/tmp/reviewer.md")
+        self.assertTrue(any(
+            "must be plugin-relative" in error
+            for error in self.errors_from_validator()
+        ))
+
+    def test_rejects_agent_path_outside_plugin(self) -> None:
+        outside = Path(self.temp_dir.name) / "outside.md"
+        outside.write_text("outside\n", encoding="utf-8")
+        self.write_manifest("./../outside.md")
+        self.assertTrue(any(
+            "escapes plugin root" in error
+            for error in self.errors_from_validator()
+        ))
+
+    def test_rejects_non_string_agent_entry(self) -> None:
+        self.write_manifest(["./agents/reviewer.md", 42])
+        self.assertTrue(any(
+            "entries must be strings" in error
+            for error in self.errors_from_validator()
+        ))
+
+    def test_repo_spec_ops_manifest_names_both_agent_files(self) -> None:
+        path = (
+            repo_validate.REPO_ROOT
+            / "plugins/alibabacloud-spec-ops/.qoder-plugin/plugin.json"
+        )
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual([
+            "./agents/code-quality-reviewer.md",
+            "./agents/spec-reviewer.md",
+        ], manifest["agents"])
+
+
 class AgentPluginsManifestTests(unittest.TestCase):
     def setUp(self) -> None:
         repo_validate.errors.clear()

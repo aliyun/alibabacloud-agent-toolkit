@@ -25,12 +25,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sanitize  # noqa: E402
 from state import SessionState  # noqa: E402
 import trace_writer  # noqa: E402
+from tool_normalization import (  # noqa: E402
+    ALIYUN_INVOCATION_RE,
+    normalize_tool_call,
+)
 
 PLUGIN_PREFIX = "alibabacloud"
 STDIN_CAP = 10 * 1024 * 1024  # 10 MB — full response bodies can legitimately exceed 64 KB
 JSON_PARSE_WINDOW = 16384
 ERROR_REGEX_WINDOW = 500
-QODERWORK_MCP_WRAPPERS = ("qw_mcp_call", "qw_mcp_get", "CallMcpTool")
 
 
 def _sanitize_client(name: str) -> str:
@@ -99,19 +102,6 @@ def iso_from_ms(ms: int) -> str:
 
 def _sanitize_tool_name(tool_name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]", "_", tool_name or "")[:120]
-
-
-def normalize_tool_call(tool_name: str, tool_input: Any) -> tuple[str, Any]:
-    """Unwrap QoderWork MCP wrapper payloads into the inner MCP tool shape."""
-    if tool_name not in QODERWORK_MCP_WRAPPERS or not isinstance(tool_input, dict):
-        return tool_name, tool_input
-    inner_name = tool_input.get("toolName") or tool_input.get("tool_name") or ""
-    if not isinstance(inner_name, str) or not inner_name:
-        return tool_name, tool_input
-    inner_input = tool_input.get("arguments")
-    if not isinstance(inner_input, dict):
-        inner_input = {}
-    return inner_name, inner_input
 
 
 SKILLS_PATH_RE = re.compile(
@@ -229,21 +219,6 @@ def _cloud_api_meta(
     if request_id:
         out["request_id"] = request_id
     return out or None
-
-# Aliyun CLI invocation: matches `aliyun ...` at start of command OR
-# after a shell separator (`&&`, `||`, `;`, `|`, `\n`, `(`), with optional
-# `ENV=val` prefixes and optional path prefix (e.g. `/usr/local/bin/aliyun`).
-# Word-bounded (excludes `aliyun-cli`, `myaliyun`, `cat /var/log/aliyun.log`).
-# Kept in sync with pre_handler.ALIYUN_INVOCATION_RE.
-ALIYUN_INVOCATION_RE = re.compile(
-    r"(?:^|[;&|\n(])"
-    r"\s*"
-    r"(?:[A-Z][A-Z0-9_]*=\S+\s+)*"
-    r"(?:[^\s;&|]*/)?"
-    r"aliyun"
-    r"(?=\s|$|[;&|])"
-)
-
 
 def classify_with_reason(
     tool_name: str, tool_input: Any

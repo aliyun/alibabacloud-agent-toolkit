@@ -3,7 +3,7 @@
 
 Processes queued telemetry events with:
 - Single-instance control via file lock (flock)
-- Fixed virtualenv with pinned package (no per-event uvx resolution)
+- Evolving MCP proxy command resolved through uvx
 - Configurable concurrency limit (sequential batch processing)
 - Hard timeout per upload with subprocess reaping
 - Finite retry budget with dead-letter logging
@@ -21,9 +21,7 @@ import subprocess
 import sys
 import time
 
-MCP_PROXY_PACKAGE = "alibabacloud.mcp-proxy"
-MCP_PROXY_PINNED_VERSION = "0.5.1"
-MCP_PROXY_PIN = f"{MCP_PROXY_PACKAGE}=={MCP_PROXY_PINNED_VERSION}"
+MCP_PROXY_UVX_SPEC = "alibabacloud.mcp-proxy@latest"
 
 DEFAULT_MAX_CONCURRENT = int(os.environ.get(
     "ALIBABACLOUD_TELEMETRY_MAX_CONCURRENT", "4"
@@ -128,75 +126,11 @@ def _remove_pid_file(pid_path):
 
 
 def _get_upload_cmd(state_dir):
-    """Return the upload command argv prefix using fixed venv or pinned uvx."""
+    """Return the upload command argv prefix."""
     override = os.environ.get("ALIBABACLOUD_TELEMETRY_UPLOADER")
     if override:
         return override.split()
-
-    venv_dir = os.path.join(state_dir, ".venv")
-    venv_bin = os.path.join(venv_dir, "bin", "plugin-telemetry")
-
-    if os.path.isfile(venv_bin):
-        return [venv_bin]
-
-    if _ensure_venv(state_dir):
-        if os.path.isfile(venv_bin):
-            return [venv_bin]
-
-    return [
-        "uvx", "--from",
-        f"{MCP_PROXY_PACKAGE}=={MCP_PROXY_PINNED_VERSION}",
-        "plugin-telemetry",
-    ]
-
-
-def _ensure_venv(state_dir):
-    """Create or update the fixed virtualenv. Returns True on success."""
-    venv_dir = os.path.join(state_dir, ".venv")
-    marker = os.path.join(venv_dir, ".telemetry-version")
-
-    if os.path.isfile(marker):
-        try:
-            with open(marker) as f:
-                if f.read().strip() == MCP_PROXY_PIN:
-                    return True
-        except OSError:
-            pass
-
-    try:
-        import venv as venv_mod
-        _log(f"Creating venv at {venv_dir}")
-        venv_mod.EnvBuilder(with_pip=True, clear=True).create(venv_dir)
-    except Exception as e:
-        _log(f"venv creation failed: {e}")
-        return False
-
-    pip_bin = os.path.join(venv_dir, "bin", "pip")
-    try:
-        result = subprocess.run(
-            [pip_bin, "install", "--quiet", MCP_PROXY_PIN],
-            timeout=120,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            _log(f"pip install failed: {result.stderr[:500]}")
-            return False
-    except subprocess.TimeoutExpired:
-        _log("pip install timed out after 120s")
-        return False
-    except Exception as e:
-        _log(f"pip install error: {e}")
-        return False
-
-    try:
-        with open(marker, "w") as f:
-            f.write(MCP_PROXY_PIN)
-    except OSError:
-        pass
-
-    _log(f"Installed {MCP_PROXY_PIN}")
-    return True
+    return ["uvx", MCP_PROXY_UVX_SPEC, "plugin-telemetry"]
 
 
 def _upload_one(cmd_prefix, args_dict):
@@ -227,6 +161,10 @@ def _upload_one(cmd_prefix, args_dict):
     except subprocess.TimeoutExpired:
         _kill_process_tree(proc)
         raise RuntimeError(f"upload timed out after {timeout}s")
+    finally:
+        for stream in (proc.stdout, proc.stderr):
+            if stream is not None:
+                stream.close()
 
 
 def _kill_process_tree(proc):

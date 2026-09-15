@@ -12,6 +12,7 @@ Validates:
 - Worker uses fixed venv, not uvx @latest per event
 """
 import fcntl
+import io
 import json
 import os
 import signal
@@ -20,6 +21,7 @@ import sys
 import tempfile
 import time
 import unittest
+from pathlib import Path
 from unittest import mock
 
 sys.path.insert(
@@ -274,7 +276,7 @@ class TestWorkerBatchProcessing(unittest.TestCase):
 
 
 class TestUploadCommand(unittest.TestCase):
-    """Worker uses fixed version, not @latest."""
+    """Worker uses the evolving MCP proxy through uvx."""
 
     def test_get_upload_cmd_override(self):
         with mock.patch.dict(
@@ -283,21 +285,19 @@ class TestUploadCommand(unittest.TestCase):
             cmd = telemetry_worker._get_upload_cmd("/tmp/test")
         self.assertEqual(cmd, ["echo", "test"])
 
-    def test_get_upload_cmd_no_venv_uses_pinned_uvx(self):
+    def test_get_upload_cmd_uses_latest_uvx(self):
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.dict(
                 os.environ, {}, clear=True
             ):
                 cmd = telemetry_worker._get_upload_cmd(tmp)
-        self.assertIn("--from", cmd)
-        pin_found = any(
-            f"=={telemetry_worker.MCP_PROXY_PINNED_VERSION}" in c
-            for c in cmd
-        )
-        self.assertTrue(pin_found, f"No pinned version in cmd: {cmd}")
-        self.assertNotIn("@latest", " ".join(cmd))
+        self.assertEqual(cmd, [
+            "uvx",
+            "alibabacloud.mcp-proxy@latest",
+            "plugin-telemetry",
+        ])
 
-    def test_get_upload_cmd_uses_existing_venv(self):
+    def test_get_upload_cmd_ignores_legacy_venv(self):
         with tempfile.TemporaryDirectory() as tmp:
             venv_bin = os.path.join(tmp, ".venv", "bin", "plugin-telemetry")
             os.makedirs(os.path.dirname(venv_bin), exist_ok=True)
@@ -307,7 +307,16 @@ class TestUploadCommand(unittest.TestCase):
 
             cmd = telemetry_worker._get_upload_cmd(tmp)
 
-        self.assertEqual(cmd, [venv_bin])
+        self.assertEqual(cmd, [
+            "uvx",
+            "alibabacloud.mcp-proxy@latest",
+            "plugin-telemetry",
+        ])
+
+    def test_worker_has_no_pinned_version_or_venv_bootstrap(self):
+        source = Path(telemetry_worker.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("MCP_PROXY_PINNED_VERSION", source)
+        self.assertNotIn("_ensure_venv", source)
 
 
 class TestProcessTreeKilling(unittest.TestCase):
@@ -346,6 +355,22 @@ class TestUploadTimeout(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             telemetry_worker._upload_one(cmd_prefix, {})
         self.assertIn("timed out", str(ctx.exception))
+
+    @mock.patch("telemetry_worker._kill_process_tree")
+    @mock.patch("telemetry_worker.subprocess.Popen")
+    def test_timeout_closes_subprocess_pipes(self, mock_popen, _mock_kill):
+        proc = mock_popen.return_value
+        proc.stdout = io.BytesIO()
+        proc.stderr = io.BytesIO()
+        proc.communicate.side_effect = subprocess.TimeoutExpired(
+            cmd=["slow-uploader"], timeout=1
+        )
+
+        with self.assertRaises(RuntimeError):
+            telemetry_worker._upload_one(["slow-uploader"], {})
+
+        self.assertTrue(proc.stdout.closed)
+        self.assertTrue(proc.stderr.closed)
 
 
 class TestPIDFile(unittest.TestCase):

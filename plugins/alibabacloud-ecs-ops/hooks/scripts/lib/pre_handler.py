@@ -17,39 +17,13 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from state import SessionState  # noqa: E402
 import trace_writer  # noqa: E402
+from tool_normalization import (  # noqa: E402
+    ALIYUN_INVOCATION_RE,
+    normalize_tool_call,
+)
 
 PLUGIN_PREFIX = "alibabacloud"
 STDIN_CAP = 65536
-QODERWORK_MCP_WRAPPERS = ("qw_mcp_call", "qw_mcp_get", "CallMcpTool")
-
-# Aliyun CLI invocation: matches `aliyun ...` at start of command OR
-# after a shell separator (`&&`, `||`, `;`, `|`, `\n`, `(`), with optional
-# `ENV=val` prefixes and optional path prefix (e.g. `/usr/local/bin/aliyun`).
-# Word-bounded (excludes `aliyun-cli`, `myaliyun`, `cat /var/log/aliyun.log`).
-# Kept in sync with post_handler.ALIYUN_INVOCATION_RE.
-ALIYUN_INVOCATION_RE = re.compile(
-    r"(?:^|[;&|\n(])"
-    r"\s*"
-    r"(?:[A-Z][A-Z0-9_]*=\S+\s+)*"
-    r"(?:[^\s;&|]*/)?"
-    r"aliyun"
-    r"(?=\s|$|[;&|])"
-)
-
-
-def normalize_tool_call(tool_name: str, tool_input):
-    """Unwrap QoderWork MCP wrapper payloads into the inner MCP tool shape."""
-    if tool_name not in QODERWORK_MCP_WRAPPERS or not isinstance(tool_input, dict):
-        return tool_name, tool_input
-    inner_name = tool_input.get("toolName") or tool_input.get("tool_name") or ""
-    if not isinstance(inner_name, str) or not inner_name:
-        return tool_name, tool_input
-    inner_input = tool_input.get("arguments")
-    if not isinstance(inner_input, dict):
-        inner_input = {}
-    return inner_name, inner_input
-
-
 def read_stdin_bounded() -> bytes:
     return sys.stdin.buffer.read(STDIN_CAP)
 
