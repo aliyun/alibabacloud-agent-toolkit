@@ -57,40 +57,112 @@ def _json_command(tokens: list[str]) -> str | None:
     return None
 
 
+def _shell_tokens(command: str) -> list[str] | None:
+    """Tokenize enough shell syntax to preserve comments and pipe direction."""
+    lexer = shlex.shlex(
+        command,
+        posix=True,
+        punctuation_chars="|&;<>()\n",
+    )
+    lexer.whitespace = " \t\r"
+    lexer.whitespace_split = True
+    lexer.commenters = "#"
+    try:
+        return list(lexer)
+    except ValueError:
+        return None
+
+
+def _command_segments(tokens: list[str]) -> tuple[list[list[str]], list[str]]:
+    """Split shell tokens and retain the operator between adjacent commands."""
+    boundaries = {"&&", "||", ";", "&", "|", "|&", "(", ")", "\n"}
+    segments: list[list[str]] = [[]]
+    separators: list[str] = []
+    for token in tokens:
+        if token in boundaries:
+            separators.append(token)
+            segments.append([])
+        else:
+            segments[-1].append(token)
+    return segments, separators
+
+
+def _is_mcpx_executable(invocation: list[str], index: int) -> bool:
+    """Return whether ``mcpx.py`` occupies a supported command position."""
+    prefix = invocation[:index]
+    while prefix and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", prefix[0]):
+        prefix = prefix[1:]
+    if prefix and prefix[0] == "env":
+        prefix = prefix[1:]
+        while prefix and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", prefix[0]):
+            prefix = prefix[1:]
+
+    if not prefix:
+        return True
+    launcher = os.path.basename(prefix[0])
+    if re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", launcher):
+        return len(prefix) == 1
+    if launcher != "uv" or len(prefix) < 2 or prefix[1] != "run":
+        return False
+
+    uv_args = prefix[2:]
+    while uv_args:
+        option = uv_args.pop(0)
+        if option in {"--isolated", "--no-project", "--offline"}:
+            continue
+        if option == "--python" and uv_args:
+            uv_args.pop(0)
+            continue
+        return False
+    return True
+
+
 def extract_wrapped_callcli(command: str) -> str | None:
     """Extract a CallCLI command from a Bash-invoked ``mcpx.py`` connector.
 
     Parsing is data-only: shell text is tokenized with :mod:`shlex` and JSON is
     decoded with :mod:`json`; no part of the input is evaluated or executed.
     """
-    try:
-        tokens = shlex.split(command, posix=True)
-    except ValueError:
+    tokens = _shell_tokens(command)
+    if tokens is None:
+        return None
+    # Correct heredoc parsing requires associating delimiters with raw lines.
+    # Prefer missing one telemetry event over treating heredoc data as execution.
+    if "<<" in tokens:
         return None
 
-    list_separators = {"&&", "||", ";"}
-    for index, token in enumerate(tokens):
-        if os.path.basename(token) != "mcpx.py":
-            continue
+    segments, separators = _command_segments(tokens)
+    for segment_index, invocation in enumerate(segments):
+        for local_index, token in enumerate(invocation):
+            if (
+                os.path.basename(token) != "mcpx.py"
+                or not _is_mcpx_executable(invocation, local_index)
+            ):
+                continue
+            try:
+                call_index = invocation.index("call", local_index + 1)
+            except ValueError:
+                continue
+            if (
+                call_index + 1 >= len(invocation)
+                or invocation[call_index + 1] != "CallCLI"
+            ):
+                continue
 
-        left = index
-        while left > 0 and tokens[left - 1] not in list_separators:
-            left -= 1
-        right = index + 1
-        while right < len(tokens) and tokens[right] not in list_separators:
-            right += 1
-        invocation = tokens[left:right]
-        local_index = index - left
-        try:
-            call_index = invocation.index("call", local_index + 1)
-        except ValueError:
-            continue
-        if (
-            call_index + 1 >= len(invocation)
-            or invocation[call_index + 1] != "CallCLI"
-        ):
-            continue
-        return _json_command(invocation)
+            callcli_args = invocation[call_index + 2 :]
+            direct_command = _json_command(callcli_args)
+            if direct_command:
+                return direct_command
+
+            has_stdin_marker = "-" in callcli_args
+            is_piped_from_previous = (
+                segment_index > 0
+                and separators[segment_index - 1] in {"|", "|&"}
+            )
+            if has_stdin_marker and is_piped_from_previous:
+                piped_command = _json_command(segments[segment_index - 1])
+                if piped_command:
+                    return piped_command
     return None
 
 

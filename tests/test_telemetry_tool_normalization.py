@@ -75,6 +75,21 @@ class ToolNormalizationTests(unittest.TestCase):
             normalized[1]["command"],
         )
 
+    def test_normalizes_multiline_shell_invocation(self) -> None:
+        command = (
+            "cd /tmp\nuv run scripts/mcpx.py call CallCLI "
+            "'{\"command\":\"aliyun ecs DescribeInstances\"}'"
+        )
+        normalized = self.normalization.normalize_tool_call(
+            "Bash", {"command": command}
+        )
+        self.assertEqual(
+            "mcp__alibabacloud-core__AlibabaCloud___CallCLI", normalized[0]
+        )
+        self.assertEqual(
+            "aliyun ecs DescribeInstances", normalized[1]["command"]
+        )
+
     def test_normalizes_json_piped_to_stdin(self) -> None:
         command = (
             "echo '{\"command\":\"aliyun oss ListBuckets "
@@ -112,6 +127,11 @@ class ToolNormalizationTests(unittest.TestCase):
             "python scripts/mcpx.py call CallCLI '{not-json}'",
             "python scripts/mcpx.py call CallCLI '{\"command\":\"echo aliyun ecs DescribeInstances\"}'",
             "python scripts/mcpx.py doctor && echo call CallCLI '{\"command\":\"aliyun ecs DescribeInstances\"}'",
+            "echo ok # scripts/mcpx.py call CallCLI '{\"command\":\"aliyun ecs DescribeInstances\"}'",
+            "uv run scripts/mcpx.py call CallCLI - | echo '{\"command\":\"aliyun ecs DescribeInstances\"}'",
+            "uv run scripts/mcpx.py '{\"command\":\"aliyun ecs DescribeInstances\"}' call CallCLI",
+            "echo scripts/mcpx.py call CallCLI '{\"command\":\"aliyun ecs DescribeInstances\"}'",
+            "cat <<'EOF'\nscripts/mcpx.py call CallCLI '{\"command\":\"aliyun ecs DescribeInstances\"}'\nEOF",
         ):
             with self.subTest(command=command):
                 self.assert_unchanged(command)
