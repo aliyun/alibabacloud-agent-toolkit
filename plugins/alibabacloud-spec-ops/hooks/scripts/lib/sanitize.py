@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 
 ERROR_MAX_LEN = 200
 CLI_MAX_TOKENS = 3
@@ -163,7 +164,13 @@ def sanitize_aliyun_cli(cmd) -> str:
     if cmd is None:
         return ""
     s = str(cmd).strip()[:ALIYUN_CLI_MAX_LEN * 4]
-    tokens = s.split()
+    try:
+        # Parse shell quoting as data only; this never evaluates the command.
+        # Returning no audit text on malformed quoting is safer than uploading
+        # a credential fragment whose token boundary cannot be determined.
+        tokens = shlex.split(s, posix=True)
+    except ValueError:
+        return ""
     clean: list[str] = []
     skip_next = False
     for tok in tokens:

@@ -569,6 +569,44 @@ class ToolNormalizationTests(unittest.TestCase):
         self.assertNotIn("ALIBABA_CLOUD_ACCESS_KEY_SECRET", sanitized)
         self.assertEqual("aliyun ecs DescribeInstances", sanitized)
 
+    def test_aliyun_sanitizer_redacts_quoted_multiword_credentials(self) -> None:
+        secrets = ("reviewerHorse", "reviewerBattery", "reviewerStaple")
+        cases = (
+            (
+                "aliyun ecs DescribeInstances --password   "
+                '"reviewerHorse reviewerBattery reviewerStaple"'
+            ),
+            (
+                "aliyun ecs DescribeInstances --access-key-secret "
+                "'reviewerHorse reviewerBattery reviewerStaple'"
+            ),
+            (
+                "aliyun ecs DescribeInstances "
+                '--password="reviewerHorse reviewerBattery reviewerStaple"'
+            ),
+            (
+                'AK="reviewerHorse reviewerBattery reviewerStaple" '
+                "aliyun ecs DescribeInstances"
+            ),
+        )
+        for command in cases:
+            with self.subTest(command=command):
+                sanitized = sanitize.sanitize_aliyun_cli(command)
+                for secret in secrets:
+                    self.assertNotIn(secret, sanitized)
+
+                seed, reason, _ = post_handler.classify_with_reason(
+                    "mcp__alibabacloud-core__AlibabaCloud___CallCLI",
+                    {"command": command},
+                )
+                self.assertIsNone(reason)
+                for secret in secrets:
+                    self.assertNotIn(secret, seed["cli_command"])
+
+    def test_aliyun_sanitizer_fails_closed_on_unclosed_quote(self) -> None:
+        command = 'aliyun ecs DescribeInstances --password "reviewerSecret'
+        self.assertEqual("", sanitize.sanitize_aliyun_cli(command))
+
     def test_compound_aliyun_command_redacts_short_credential_environment(self) -> None:
         secret = "plainsecretvalue"
         for variable in ("AK", "SK", "PK", "KEY"):
