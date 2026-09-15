@@ -172,7 +172,7 @@ export ALIBABACLOUD_TELEMETRY=false
 | `QODER_WORK_INTEGRATION_MODE`       | unset                                                  | Set to `1` by Qoder-family hosts running in integration mode. On its own it still resolves to `qoderwork`. |
 | `QODER_WORK_INTEGRATION_PRODUCT`    | unset                                                  | Highest-priority Qoder-family marker: when non-empty its value becomes the client name verbatim (sanitized), e.g. `qwenworkcn`. |
 | `QODER_PRODUCT_ID`                  | unset                                                  | New Qoder sets `qoder` or `qoder-cn`; both resolve to the stable client name `qoder`. |
-| `VSCODE_BRAND`                      | unset                                                  | Qoder IDE sets `Qoder`; this resolves to `qoder` even though the shared hook command also sets `QODER_WORK=1`. |
+| `VSCODE_BRAND`                      | unset                                                  | Qoder IDE sets `Qoder`; this resolves to `qoder-ide` even though the shared hook command also sets `QODER_WORK=1`. |
 | `QODER_AGENT`                       | unset                                                  | Set to `true` by qodercli / qoderIDE. Combined with the two vars below it resolves to `qoder_<QODER_HOOK_SOURCE>_<QODER_IDE>`. |
 | `QODER_HOOK_SOURCE`                 | unset                                                  | Hook origin reported by a `QODER_AGENT=true` host, e.g. `cli`. Required together with `QODER_IDE`; if either is missing the client falls back to `qoderwork`. |
 | `QODER_IDE`                         | unset                                                  | IDE/workspace discriminator reported by a `QODER_AGENT=true` host, e.g. `0`. Required together with `QODER_HOOK_SOURCE`. |
@@ -284,9 +284,14 @@ omitted (we never generate a caller-side UUID).
 
 ### Tool normalization (`lib/tool_normalization.py`)
 
-Pre- and post-tool handlers share one normalization layer. Native Qoder-family
-wrappers (`qw_mcp_call`, `qw_mcp_get`, `CallMcpTool`, and New Qoder's
-`mcp_call`) are unwrapped into their inner MCP tool and arguments. A Bash
+Pre- and post-tool handlers share one normalization layer. Known native
+wrappers (`qw_mcp_call`, `qw_mcp_get`, `CallMcpTool`, and `mcp_call`) are
+unwrapped into their inner tool and arguments. Client-private wrapper names are
+also supported without pinning their prefix: a structured `toolName` +
+`arguments` payload is unwrapped only when the inner MCP tool, Alibaba Cloud
+skill/agent, or skill-file read independently proves plugin ownership. The
+namespaced Qoder Work metadata lookup and unrelated third-party tools remain
+filtered. A Bash
 command that invokes `mcpx.py call
 CallCLI` with a JSON request containing an `aliyun` command is normalized to
 `AlibabaCloud___CallCLI`; this covers connector-based QwenWork calls while
@@ -579,7 +584,7 @@ the environment the host injects:
 1. `QODER_WORK_INTEGRATION_PRODUCT` non-empty → that value, e.g. `qwenworkcn`
    for 千问办公中国版
 2. else `QODER_PRODUCT_ID=qoder|qoder-cn` → `qoder` for New Qoder
-3. else `VSCODE_BRAND=Qoder` → `qoder` for Qoder IDE
+3. else `VSCODE_BRAND=Qoder` → `qoder-ide` for Qoder IDE
 4. else `QODER_AGENT=true` with both `QODER_HOOK_SOURCE` and `QODER_IDE`
    non-empty → `qoder_<QODER_HOOK_SOURCE>_<QODER_IDE>`, e.g. `qoder_cli_0`
 5. else → `qoderwork`, the legacy default that `QODER_WORK=1` alone yields

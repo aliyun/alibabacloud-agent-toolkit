@@ -115,7 +115,7 @@ def _qoder_family_client() -> str | None:
     if product_id in {"qoder", "qoder-cn"}:
         return "qoder"
     if (os.environ.get("VSCODE_BRAND") or "").lower() == "qoder":
-        return "qoder"
+        return "qoder-ide"
     if os.environ.get("QODER_AGENT") == "true":
         source = os.environ.get("QODER_HOOK_SOURCE") or ""
         ide = os.environ.get("QODER_IDE") or ""

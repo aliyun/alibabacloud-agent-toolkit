@@ -14,6 +14,7 @@ QODERWORK_MCP_WRAPPERS = (
     "qw_mcp_get",
     "CallMcpTool",
     "mcp_call",
+    "mcp__qw-builtin__qw_mcp_call",
 )
 NORMALIZED_CALLCLI_TOOL = (
     "mcp__alibabacloud-core__AlibabaCloud___CallCLI"
@@ -32,16 +33,71 @@ ALIYUN_INVOCATION_RE = re.compile(
 )
 
 
-def _unwrap_qoder(tool_name: str, tool_input: Any) -> tuple[str, Any]:
-    """Unwrap a native Qoder-family MCP wrapper payload."""
-    if tool_name not in QODERWORK_MCP_WRAPPERS or not isinstance(tool_input, dict):
+def _is_alibabacloud_inner_tool(tool_name: str, tool_input: dict[str, Any]) -> bool:
+    """Recognize our tools without depending on a client's private wrapper name."""
+    lowered = tool_name.lower()
+    if "alibabacloud" in lowered or "alibaba_cloud" in lowered:
+        return True
+    if tool_name in {"Skill", "skill"}:
+        skill = tool_input.get("skill") or ""
+        return isinstance(skill, str) and skill.lower().startswith("alibabacloud")
+    if tool_name in {"Agent", "agent"}:
+        subagent = tool_input.get("subagent_type") or ""
+        return (
+            isinstance(subagent, str)
+            and subagent.lower().startswith("alibabacloud")
+        )
+    if tool_name in {"Read", "view", "read_file"}:
+        path = (
+            tool_input.get("file_path")
+            or tool_input.get("filePath")
+            or tool_input.get("path")
+            or ""
+        )
+        return (
+            isinstance(path, str)
+            and "alibabacloud" in path.lower()
+            and "/skills/" in path.replace("\\", "/").lower()
+        )
+    if tool_name == "Bash":
+        command = tool_input.get("command") or ""
+        if not isinstance(command, str):
+            return False
+        normalized_command = command.replace("\\", "/")
+        return bool(
+            ALIYUN_INVOCATION_RE.search(command)
+            or (
+                "alibabacloud" in normalized_command.lower()
+                and "/skills/" in normalized_command.lower()
+            )
+        )
+    return False
+
+
+def _unwrap_client_tool(tool_name: str, tool_input: Any) -> tuple[str, Any]:
+    """Unwrap known or structurally safe client tool-call wrappers."""
+    if not isinstance(tool_input, dict):
         return tool_name, tool_input
     inner_name = tool_input.get("toolName") or tool_input.get("tool_name") or ""
     if not isinstance(inner_name, str) or not inner_name:
         return tool_name, tool_input
-    inner_input = tool_input.get("arguments")
-    if not isinstance(inner_input, dict):
-        inner_input = {}
+    raw_inner_input = tool_input.get("arguments")
+    if tool_name not in QODERWORK_MCP_WRAPPERS:
+        if (
+            "alibabacloud" in tool_name.lower()
+            or "alibaba_cloud" in tool_name.lower()
+        ):
+            return tool_name, tool_input
+        # Metadata lookup wrappers are not actual invocations. Other wrapper
+        # names are deliberately treated as opaque unless their inner payload
+        # independently proves that the operation belongs to this plugin.
+        if re.search(r"(?:^|__)qw_mcp_get$", tool_name, re.IGNORECASE):
+            return tool_name, tool_input
+        if not isinstance(raw_inner_input, dict):
+            return tool_name, tool_input
+        if not _is_alibabacloud_inner_tool(inner_name, raw_inner_input):
+            return tool_name, tool_input
+    inner_input = raw_inner_input if isinstance(raw_inner_input, dict) else {}
     return inner_name, inner_input
 
 
@@ -229,7 +285,7 @@ def extract_wrapped_callcli(command: str) -> str | None:
 
 def normalize_tool_call(tool_name: str, tool_input: Any) -> tuple[str, Any]:
     """Normalize native Qoder wrappers and Bash-wrapped MCP Core CallCLI."""
-    inner_name, inner_input = _unwrap_qoder(tool_name, tool_input)
+    inner_name, inner_input = _unwrap_client_tool(tool_name, tool_input)
     if inner_name != tool_name or inner_input is not tool_input:
         return inner_name, inner_input
 

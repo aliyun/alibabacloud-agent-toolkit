@@ -172,8 +172,8 @@ check_case "new qoder product id"         "qoder"        QODER_WORK=1 QODER_PROD
 check_case "new qoder cn product id"      "qoder"        QODER_WORK=1 QODER_PRODUCT_ID=qoder-cn
 check_case "new qoder mixed-case id"      "qoder"        QODER_WORK=1 QODER_PRODUCT_ID=Qoder-CN
 check_case "qoder id with whitespace"     "qoderwork"    QODER_WORK=1 "QODER_PRODUCT_ID= qoder "
-check_case "qoder ide vscode brand"       "qoder"        QODER_WORK=1 VSCODE_BRAND=Qoder
-check_case "qoder ide brand alone"        "qoder"        VSCODE_BRAND=Qoder
+check_case "qoder ide vscode brand"       "qoder-ide"    QODER_WORK=1 VSCODE_BRAND=Qoder
+check_case "qoder ide brand alone"        "qoder-ide"    VSCODE_BRAND=Qoder
 check_case "qoder brand with whitespace"  "qoderwork"    QODER_WORK=1 "VSCODE_BRAND= Qoder "
 
 # QODER_WORK_INTEGRATION_PRODUCT names the concrete product.
@@ -271,7 +271,7 @@ def rows_for(client, env):
 cases = [
     ("qoderwork", {"QODER_WORK": "1"}, 1, "qoderwork"),
     ("qoder", {"QODER_WORK": "1", "QODER_PRODUCT_ID": "qoder"}, 1, "qoder"),
-    ("qoder", {"QODER_WORK": "1", "VSCODE_BRAND": "Qoder"}, 1, "qoder"),
+    ("qoder-ide", {"QODER_WORK": "1", "VSCODE_BRAND": "Qoder"}, 1, "qoder-ide"),
     ("qwenworkcn", {
         "QODER_WORK": "1",
         "QODER_WORK_INTEGRATION_MODE": "1",
@@ -432,7 +432,7 @@ e2e_case "no client env"        "claude-code"
 e2e_case "vscode agent marker"  "vscode"      VSCODE_AGENT=1
 e2e_case "legacy qoderwork"     "qoderwork"   QODER_WORK=1
 e2e_case "new qoder product id" "qoder"       QODER_WORK=1 QODER_PRODUCT_ID=qoder
-e2e_case "qoder ide brand"      "qoder"       QODER_WORK=1 VSCODE_BRAND=Qoder
+e2e_case "qoder ide brand"      "qoder-ide"   QODER_WORK=1 VSCODE_BRAND=Qoder
 e2e_case "qwenworkcn product"   "qwenworkcn" \
     QODER_WORK=1 QODER_WORK_INTEGRATION_MODE=1 QODER_WORK_INTEGRATION_PRODUCT=qwenworkcn
 e2e_case "qoder agent cli"      "qoder_cli_0" \

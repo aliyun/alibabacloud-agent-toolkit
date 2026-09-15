@@ -141,6 +141,112 @@ class ToolNormalizationTests(unittest.TestCase):
             self.normalization.normalize_tool_call("qw_mcp_call", tool_input),
         )
 
+    def test_normalizes_namespaced_qoderwork_mcp_call_wrapper(self) -> None:
+        tool_input = {
+            "toolName": (
+                "mcp__alibabacloud-core__AlibabaCloud___GetApiDefinition"
+            ),
+            "arguments": {"product": "Ecs", "apiName": "DescribeInstances"},
+            "timeout": 120,
+        }
+        normalized = self.normalization.normalize_tool_call(
+            "mcp__qw-builtin__qw_mcp_call", tool_input
+        )
+        self.assertEqual(
+            (
+                tool_input["toolName"],
+                tool_input["arguments"],
+            ),
+            normalized,
+        )
+        self.assertTrue(pre_handler.is_ours_tool(*normalized))
+        seed, reason, _ = post_handler.classify_with_reason(*normalized)
+        self.assertIsNone(reason)
+        self.assertEqual("mcp_tool_use", seed["event_type"])
+        self.assertEqual("AlibabaCloud___GetApiDefinition", seed["mcp_tool"])
+        self.assertEqual("alibabacloud-core", seed["plugin_name"])
+
+    def test_does_not_unwrap_namespaced_qoderwork_metadata_lookup(self) -> None:
+        tool_input = {
+            "toolName": (
+                "mcp__alibabacloud-core__AlibabaCloud___GetApiDefinition"
+            ),
+            "arguments": {},
+        }
+        self.assertEqual(
+            ("mcp__qw-builtin__qw_mcp_get", tool_input),
+            self.normalization.normalize_tool_call(
+                "mcp__qw-builtin__qw_mcp_get", tool_input
+            ),
+        )
+
+    def test_unwraps_private_client_prefix_when_inner_mcp_tool_is_ours(self) -> None:
+        for action in ("CallCLI", "RunIaC", "RunScript"):
+            with self.subTest(action=action):
+                tool_input = {
+                    "toolName": (
+                        "mcp__alibabacloud-core__AlibabaCloud___" + action
+                    ),
+                    "arguments": {"action": "plan"},
+                }
+                self.assertEqual(
+                    (tool_input["toolName"], tool_input["arguments"]),
+                    self.normalization.normalize_tool_call(
+                        "mcp__client-private-v42__qw_mcp_call", tool_input
+                    ),
+                )
+
+    def test_unwraps_private_client_wrapper_for_alibabacloud_skill(self) -> None:
+        tool_input = {
+            "toolName": "Skill",
+            "arguments": {"skill": "alibabacloud-core:mcp-core-best-practices"},
+        }
+        normalized = self.normalization.normalize_tool_call(
+            "private_client_tool_proxy", tool_input
+        )
+        self.assertEqual(("Skill", tool_input["arguments"]), normalized)
+        self.assertTrue(pre_handler.is_ours_tool(*normalized))
+
+    def test_unwraps_private_client_wrapper_for_alibabacloud_skill_file(self) -> None:
+        tool_input = {
+            "toolName": "Read",
+            "arguments": {
+                "file_path": (
+                    "/tmp/plugins/alibabacloud-core/skills/example/SKILL.md"
+                )
+            },
+        }
+        normalized = self.normalization.normalize_tool_call(
+            "private_client_tool_proxy", tool_input
+        )
+        self.assertEqual(("Read", tool_input["arguments"]), normalized)
+        seed, reason, _ = post_handler.classify_with_reason(*normalized)
+        self.assertIsNone(reason)
+        self.assertEqual("skill_invocation", seed["event_type"])
+
+    def test_does_not_unwrap_private_wrapper_for_unrelated_inner_tool(self) -> None:
+        tool_input = {
+            "toolName": "mcp__other-cloud__DeleteEverything",
+            "arguments": {"resource": "example"},
+        }
+        self.assertEqual(
+            ("private_client_tool_proxy", tool_input),
+            self.normalization.normalize_tool_call(
+                "private_client_tool_proxy", tool_input
+            ),
+        )
+
+    def test_does_not_double_unwrap_direct_alibabacloud_tool(self) -> None:
+        tool_input = {
+            "toolName": "mcp__alibabacloud-core__AlibabaCloud___CallCLI",
+            "arguments": {"value": "example"},
+        }
+        tool_name = "mcp__alibabacloud-core__AlibabaCloud___RunScript"
+        self.assertEqual(
+            (tool_name, tool_input),
+            self.normalization.normalize_tool_call(tool_name, tool_input),
+        )
+
     def test_normalizes_new_qoder_mcp_call_wrapper(self) -> None:
         tool_input = {
             "toolName": (
