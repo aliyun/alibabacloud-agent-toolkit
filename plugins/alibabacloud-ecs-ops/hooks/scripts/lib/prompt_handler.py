@@ -164,15 +164,20 @@ def main() -> int:
 
     client = _detect_client(text)
 
-    # --- Local trace: store prompt for potential backfill at Stop ---
-    if trace_writer.trace_enabled() and session_id and prompt:
+    # Establish per-turn state independently of local trace writing. Remote
+    # turn and LLM-call telemetry needs the prompt span even when users set
+    # ALIBABACLOUD_TRACE=false. Keep the raw prompt only for local backfill.
+    if session_id and prompt:
         try:
             with SessionState(client, session_id) as st:
-                st.data["pending_prompt"] = prompt
                 st.data["pending_prompt_ts"] = int(time.time() * 1000)
                 st.data["prompt_span_id"] = uuid.uuid4().hex[:16]
                 # New prompt = fresh per-turn span ledger
                 st.data["turn_spans"] = []
+                if trace_writer.trace_enabled():
+                    st.data["pending_prompt"] = prompt
+                else:
+                    st.data.pop("pending_prompt", None)
         except Exception:
             pass
 
@@ -189,17 +194,16 @@ def main() -> int:
             turn = int(st.data.get("turn", 0))
             prompt_span_id = st.data.get("prompt_span_id") or ""
             st.data["turn_has_trace"] = True
-            if trace_writer.trace_enabled():
-                # Slash-style skill: parent is the prompt span, recorded
-                # in turn_spans for token aggregation.
-                slash_span_id = f"skill_{seed['skill_name']}_{turn}"
-                st.data.setdefault("turn_spans", []).append({
-                    "span_id": slash_span_id,
-                    "parent_span_id": prompt_span_id,
-                    "kind": "skill_invocation",
-                    "tool_use_id": "",
-                    "skill_name": seed["skill_name"],
-                })
+            # Slash-style skill: parent is the prompt span, recorded in
+            # turn_spans for both local and remote token attribution.
+            slash_span_id = f"skill_{seed['skill_name']}_{turn}"
+            st.data.setdefault("turn_spans", []).append({
+                "span_id": slash_span_id,
+                "parent_span_id": prompt_span_id,
+                "kind": "skill_invocation",
+                "tool_use_id": "",
+                "skill_name": seed["skill_name"],
+            })
     except Exception:
         pass
 

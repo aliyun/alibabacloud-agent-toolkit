@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import importlib.util
+import io
+import json
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -18,6 +22,7 @@ import post_handler
 import pre_handler
 import prompt_handler
 import sanitize
+from state import SessionState
 
 
 def load_normalization(testcase: unittest.TestCase):
@@ -646,6 +651,91 @@ class ToolNormalizationTests(unittest.TestCase):
         ):
             self.assertEqual(50, post_handler._find_agent_pid())
         check.assert_called_once()
+
+
+class TelemetryRegressionTests(unittest.TestCase):
+    def test_string_mcp_error_response_is_reported_as_failure(self) -> None:
+        status, error_class = post_handler.detect_status({
+            "tool_response": json.dumps({
+                "code": -32603,
+                "message": "Call mcp tools error",
+                "data": {"detail": "CLI Command execution failed"},
+            })
+        })
+
+        self.assertEqual("failure", status)
+        self.assertEqual("MCPError:-32603", error_class)
+
+    def test_string_mcp_success_response_remains_success(self) -> None:
+        status, error_class = post_handler.detect_status({
+            "tool_response": json.dumps({
+                "code": 0,
+                "data": {"requestId": "test-request-id"},
+            })
+        })
+
+        self.assertEqual("success", status)
+        self.assertEqual("", error_class)
+
+    def test_first_tracked_tool_synthesizes_missing_prompt_span(self) -> None:
+        payload = {
+            "session_id": "new-qoder-without-prompt-hook",
+            "tool_use_id": "tool-use-1",
+            "tool_name": "mcp_call",
+            "tool_input": {
+                "toolName": (
+                    "mcp__plugin_alibabacloud-core_alibabacloud-core__"
+                    "AlibabaCloud_CallCLI"
+                ),
+                "arguments": {"command": "aliyun ecs DescribeRegions"},
+            },
+        }
+        fake_stdin = mock.Mock()
+        fake_stdin.buffer = io.BytesIO(json.dumps(payload).encode())
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            os.environ,
+            {
+                "ALIBABACLOUD_TELEMETRY_STATE_DIR": tmp,
+                "ALIBABACLOUD_TRACE": "false",
+                "QODER_PRODUCT_ID": "qoder",
+            },
+            clear=True,
+        ), mock.patch.object(pre_handler.sys, "stdin", fake_stdin):
+            self.assertEqual(0, pre_handler.main())
+            with SessionState("qoder", payload["session_id"]) as st:
+                self.assertTrue(st.data.get("turn_has_trace"))
+                self.assertTrue(st.data.get("prompt_span_id"))
+                self.assertIsInstance(st.data.get("pending_prompt_ts"), int)
+                self.assertEqual(
+                    st.data["prompt_span_id"],
+                    st.data["turn_spans"][0]["parent_span_id"],
+                )
+
+    def test_slash_skill_keeps_remote_turn_state_when_local_trace_is_off(self) -> None:
+        payload = {
+            "session_id": "slash-skill-with-local-trace-off",
+            "prompt": "/alibabacloud-core:mcp-core-best-practices help",
+        }
+        fake_stdin = mock.Mock()
+        fake_stdin.buffer = io.BytesIO(json.dumps(payload).encode())
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            os.environ,
+            {
+                "ALIBABACLOUD_TELEMETRY_STATE_DIR": tmp,
+                "ALIBABACLOUD_TRACE": "false",
+            },
+            clear=True,
+        ), mock.patch.object(
+            prompt_handler.sys, "stdin", fake_stdin
+        ), mock.patch.object(prompt_handler.sys, "stdout", io.StringIO()):
+            self.assertEqual(0, prompt_handler.main())
+            with SessionState("claude-code", payload["session_id"]) as st:
+                self.assertTrue(st.data.get("turn_has_trace"))
+                self.assertTrue(st.data.get("prompt_span_id"))
+                self.assertIsInstance(st.data.get("pending_prompt_ts"), int)
+                self.assertNotIn("pending_prompt", st.data)
 
 
 if __name__ == "__main__":

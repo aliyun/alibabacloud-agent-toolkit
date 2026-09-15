@@ -662,6 +662,10 @@ def _scan_dict_for_error(d: dict) -> Optional[str]:
             or str(d.get("Error") or "")
         )
         if code:
+            if isinstance(code, (int, float)) and not isinstance(code, bool):
+                # Preserve the JSON-RPC shape expected by classify_error;
+                # returning "-32603: ..." loses the structured MCP class.
+                return json.dumps({"code": code}, separators=(",", ":"))
             return f"{code}: {detail}" if detail else str(code)
         return str(detail) if detail else "error"
     status = d.get("status")
@@ -679,8 +683,13 @@ def detect_status(data: dict) -> tuple[str, str]:
     tool_response = data.get("tool_response") or {}
     tool_error = data.get("tool_error") or data.get("error") or ""
     tool_result = data.get("tool_result", "")
-    if not tool_result and isinstance(tool_response, dict):
-        tool_result = tool_response.get("stdout", "") or ""
+    if not tool_result:
+        if isinstance(tool_response, dict):
+            tool_result = tool_response.get("stdout", "") or ""
+        elif isinstance(tool_response, str):
+            # Qoder-family MCP wrappers return their full result envelope as
+            # a JSON string in tool_response rather than tool_result.
+            tool_result = tool_response
 
     def _result_message(plain_fallback: bool = False) -> str:
         """Extract the most informative error message from tool_result.
