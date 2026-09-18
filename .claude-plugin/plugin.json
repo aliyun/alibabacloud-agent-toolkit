@@ -1,0 +1,30 @@
+{
+  "name": "alibabacloud-opc",
+  "version": "0.0.2",
+  "description": "Alibaba Cloud OPC (one-person company) package selection and provisioning for solo developers, with an itemized monthly cost confirmation before any charge.",
+  "author": {
+    "name": "Alibaba Cloud"
+  },
+  "keywords": [
+    "alibabacloud",
+    "aliyun",
+    "opc"
+  ],
+  "homepage": "https://github.com/aliyun/alibabacloud-agent-toolkit",
+  "repository": "https://github.com/aliyun/alibabacloud-agent-toolkit",
+  "license": "Apache-2.0",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Alibaba Cloud OPC Package Selection and Deployment",
+    "shortDescription": "Alibaba Cloud OPC package selection and provisioning",
+    "longDescription": "End-to-end handling of Alibaba Cloud OPC (one-person company) package requests for solo developers and micro businesses: first settle which package fits the user's scale and feature needs (never decide for them), then provision the package's resources — compute server, managed database, object storage, edge acceleration — always presenting the full resource list with itemized monthly cost and requiring explicit user confirmation before any charge. Use it when the user does not know which package to pick, already has a package name and wants it provisioned, or wants to deploy a personal site, portfolio, mini-program backend, or AI application. Scope is limited to OPC packages; it is not a general server operations plugin.",
+    "developerName": "Alibaba Cloud",
+    "category": "Cloud",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/aliyun/alibabacloud-agent-toolkit"
+  }
+}

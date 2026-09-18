@@ -1,0 +1,660 @@
+# OPC Cloud Deploy - pro_burst SKU params
+# On top of pro_steady: ECS upgraded to 8C16G ×2 (elastic to 3) + ESS auto-scaling
+# Use case: bursty traffic (livestream/campaign/flash-sale), normal usually, spikes to 500-1000 concurrent
+
+sku: pro_burst
+version: v1.0.0
+region_default: cn-beijing
+# ⚠️ SIZING-REFERENCE ONLY — never use this as the payment-gate total.
+# The payment total is always re-summed from live DescribePrice results in Phase 1.2.5
+# (Hard Gate #1 multi-order clause). Editing this field does not change the amount the
+# user will be charged; that comes from live inquiry, not from this static estimate.
+monthly_price: "¥3258.19/月（min=2）/ ¥4021.83（弹出 1 台）+ ALB LCU 按量≈¥30-50"
+disclaimer: "💡 价格供参考，实际以最终下单为准。ESA 标准版的成交价按账号优惠资格浮动（标价 ¥375/月，命中新用户专享等优惠后更低），下单前必须用 esa describe-rate-plan-price 实时询价取 Price 字段，不得引用本文件里的任何估值。"
+
+# ═══════════════════════════════════════
+# Differences from pro_steady
+# ═══════════════════════════════════════
+# Difference 1: ECS from c9i 4C8G ×2 → 8C16G ×2 (+¥744/month)
+# Difference 2: added ESS auto-scaling (min=2, max=3), auto-launches a 3rd instance on burst
+# Difference 3: the ESS service itself is free; you only pay for the launched ECS (temporary pay-as-you-go ≈¥763.64/month level, billed hourly)
+# Reason: traffic spikes need a stronger single node + elastic scale-out capability
+
+package_contents: |
+  这个套餐包含（弹性高可用架构）：
+  ✦ AI 助理的家（轻量应用服务器 + OpenClaw）
+  ✦ 业务店面 × 2-3 台（ECS 8核16G，平时2台，突发自动拉第3台）
+  ✦ 弹性伸缩（ESS）—— 流量尖刺时自动加机器，回落后自动缩
+  ✦ 分流引导员（ALB 负载均衡）
+  ✦ 客户档案柜（RDS 高可用版 4核8G）
+  ✦ 大仓库（OSS 500GB）
+  ✦ 全球加速 + 安全防护（ESA 标准版）
+  ✦ AI 能力（Token Plan AI 模型订阅计划 标准版）
+  ✦ 存储空间（阿里云盘 500GB）
+
+deploy_creates: |
+  接下来我帮你创建的资源：
+  - 自动创建：轻量 + ECS ×2 + ESS 伸缩组 + ALB + RDS HA + OSS + VPC 网络
+  - 手动引导：Token Plan + PDS
+
+user_summary: |
+  即将为你创建/开通（弹性高可用架构）：
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ✦ AI 助理的家（轻量服务器 + OpenClaw 2核4G + 50GiB 系统盘）          → 自动
+  ✦ 业务店面 × 2 台（ECS 8核16G + 40GiB 系统盘 ×2，可弹性到 3 台） → 自动
+  ✦ 弹性伸缩（ESS，流量大时自动加机器）           → 自动
+  ✦ 分流引导员（ALB 负载均衡）                    → 自动
+  ✦ 客户档案柜（RDS 高可用版 4核8G + 200GB 数据存储空间）         → 自动
+  ✦ 大仓库（OSS 500GB）                           → 自动
+  ✦ AI 能力（Token Plan 标准版）                   → 手动
+  ✦ 存储空间（阿里云盘 500GB）                     → 手动
+  ✦ 全球加速 + 防护（ESA 标准版）                  → 我自动帮你开（这笔计入本次扣款，金额下单前询价告诉你）
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  费用：¥3258.19/月（2台常驻）
+       突发拉第3台时 +约 ¥1/小时（按实际运行时长）
+       + ALB 按量约 ¥30-50/月
+  地域：北京
+
+  ⚠️ 这是 OPC 最高配。适合有明确突发流量场景的业务。
+  即将从你的阿里云账户扣款 ¥${automatic_total}/月，确认付款？
+
+# ═══════════════════════════════════════
+# Create steps
+# ═══════════════════════════════════════
+steps:
+
+  # ─── Step 1: SWAS + OpenClaw ───
+  - name: "创建 AI 助理的家（轻量应用服务器 + OpenClaw）"
+    type: api
+    product: swas-open
+    action: CreateInstances
+    params:
+      RegionId: "${region}"
+      ImageId: "${openclaw_image_id}"  # dynamic lookup
+      PlanId: "swas.s.c2m4s50b1.linux"
+      # hardcoded (SWAS has no public ListPlans API)
+      Period: 1
+      AutoRenew: false  # auto-renew off by default
+    wait_until:
+      product: swas-open
+      action: ListInstances
+      params:
+        RegionId: "${region}"
+      condition: "Instances[last].Status == Running"
+      timeout_seconds: 300
+      poll_interval_seconds: 15
+    output_vars:
+      swas_instance_id: "InstanceIds[0]"
+    post_actions:
+      - product: swas-open
+        action: ListInstances
+        params:
+          RegionId: "${region}"
+          InstanceIds: '["${swas_instance_id}"]'
+        output_vars:
+          swas_public_ip: "Instances[0].PublicIpAddress"
+    report: |
+      ✓ AI 助理的家已就绪！
+        公网 IP：${swas_public_ip}
+        登录入口：去轻量应用服务器控制台 https://swas.console.aliyun.com/
+                 → 找到「OPC-Pro-Burst-OpenClaw」→ 点「应用详情」→「登录 Web UI」按钮（用控制台显示的 Token 登录）
+        配置：2核4G · 50GiB 系统盘（类似你电脑的系统盘）· 200Mbps 峰值带宽
+        网络：套餐内含流量，不另收费（类似手机流量套餐）
+      💡 不直接用 IP+8080，更安全
+
+  # ─── Step 2: ECS ×2 (8C16G) ───
+  - name: "创建业务店面（ECS 8核16G × 2 台）"
+    type: api
+    product: ecs
+    action: RunInstances
+    params:
+      RegionId: "${region}"
+      ZoneId: "${zone_id}"
+      InstanceType: "ecs.c9i.2xlarge"
+      # c9i.2xlarge = 8C16G
+      ImageId: "${state.resources.ecs.image_id}"
+      SecurityGroupId: "${security_group_id}"
+      VSwitchId: "${vswitch_id}"
+      InstanceName: "OPC-Pro-Burst-ECS"
+      HostName: "opc-pro-burst"
+      InstanceChargeType: "PrePaid"
+      Period: 1
+      PeriodUnit: "Month"
+      AutoRenew: false  # auto-renew off by default
+      SystemDisk.Category: "cloud_essd"
+      SystemDisk.Size: 40
+      SystemDisk.PerformanceLevel: "PL0"
+      InternetChargeType: "PayByTraffic"
+      InternetMaxBandwidthOut: 100
+      Amount: 2
+      Tag.1.Key: "opc:managed"
+      Tag.1.Value: "true"
+      Tag.2.Key: "opc:sku"
+      Tag.2.Value: "pro_burst"
+    wait_until:
+      product: ecs
+      action: DescribeInstanceStatus
+      params:
+        RegionId: "${region}"
+        InstanceId.1: "${ecs_instance_id_1}"
+        InstanceId.2: "${ecs_instance_id_2}"
+      condition: "all Status == Running"
+      timeout_seconds: 300
+      poll_interval_seconds: 10
+    output_vars:
+      ecs_instance_id_1: "InstanceIdSets.InstanceIdSet[0]"
+      ecs_instance_id_2: "InstanceIdSets.InstanceIdSet[1]"
+    post_actions:
+      # ECS RunInstances --Tag does not persist; must call TagResources after creation to backfill the tags
+      - product: ecs
+        action: TagResources
+        params:
+          RegionId: "${region}"
+          ResourceType: "instance"
+          ResourceId.1: "${ecs_instance_id_1}"
+          ResourceId.2: "${ecs_instance_id_2}"
+          Tag.1.Key: "opc:managed"
+          Tag.1.Value: "true"
+          Tag.2.Key: "opc:sku"
+          Tag.2.Value: "pro_burst"
+      - product: ecs
+        action: DescribeInstances
+        params:
+          RegionId: "${region}"
+          InstanceIds: '["${ecs_instance_id_1}","${ecs_instance_id_2}"]'
+        output_vars:
+          ecs_public_ip_1: "Instances.Instance[0].PublicIpAddress.IpAddress[0]"
+          ecs_public_ip_2: "Instances.Instance[1].PublicIpAddress.IpAddress[0]"
+          ecs_private_ip_1: "Instances.Instance[0].VpcAttributes.PrivateIpAddress.IpAddress[0]"
+          ecs_private_ip_2: "Instances.Instance[1].VpcAttributes.PrivateIpAddress.IpAddress[0]"
+    report: |
+      ✓ 双机店面已就绪！
+        ECS-1：${ecs_public_ip_1}（8核16G）
+        ECS-2：${ecs_public_ip_2}（8核16G）
+        配置：8核16G × 2 台 · 40GiB 系统盘（类似你电脑的系统盘）· 100Mbps 峰值带宽
+        网络：流量按使用量计费，每月送 220GB 免费额度（类似手机流量套餐——超出免费额度才计费）
+
+  # ─── Step 3: ALB ───
+  # ⚠️ ALB REGION: alb rejects --biz-region-id. The RegionId below must be passed as the CLI's GLOBAL
+  #    flag `--region ${region}`, NOT as a parameter flag. Omitting it does NOT error — the CLI falls
+  #    back to the profile's default region, which silently puts the ALB in a different region from its
+  #    own VPC/ECS. See cli-meta.md "Region — alb".
+  # ⚠️ ALB STRUCT PARAMS: LoadBalancerBillingConfig / ZoneMappings below are object / list params. With
+  #    two zone mappings they MUST be one JSON array, e.g.
+  #      --zone-mappings '[{"ZoneId":"..","VSwitchId":".."},{"ZoneId":"..","VSwitchId":".."}]'
+  #    The inline `ZoneId=a,VSwitchId=b ZoneId=c,VSwitchId=d` form silently keeps only ONE mapping,
+  #    and ALB requires two zones. See cli-meta.md "RepeatList — two or more entries".
+  - name: "创建分流引导员（ALB 负载均衡）"
+    type: api
+    product: alb
+    action: CreateLoadBalancer
+    params:
+      RegionId: "${region}"
+      LoadBalancerName: "OPC-Pro-Burst-ALB"
+      VpcId: "${vpc_id}"
+      AddressType: "Internet"
+      LoadBalancerBillingConfig.PayType: "PostPay"
+      ZoneMappings.1.ZoneId: "${zone_id}"
+      ZoneMappings.1.VSwitchId: "${vswitch_id}"
+      ZoneMappings.2.ZoneId: "${zone_id_2}"
+      ZoneMappings.2.VSwitchId: "${vswitch_id_2}"
+    wait_until:
+      product: alb
+      action: GetLoadBalancerAttribute
+      params:
+        LoadBalancerId: "${alb_id}"
+      condition: "LoadBalancerStatus == Active"
+      timeout_seconds: 300
+      poll_interval_seconds: 10
+    output_vars:
+      alb_id: "LoadBalancerId"
+    post_actions:
+      # The ServerGroup backend-protocol-HTTP tradeoff is the same as pro_steady (VPC intranet transport + app-layer simplicity prioritized)
+      - product: alb
+        action: CreateServerGroup
+        params:
+          RegionId: "${region}"
+          ServerGroupName: "OPC-Pro-Burst-SG"
+          VpcId: "${vpc_id}"
+          Protocol: "HTTP"
+          HealthCheckConfig.HealthCheckEnabled: true
+          HealthCheckConfig.HealthCheckPath: "/"
+        output_vars:
+          server_group_id: "ServerGroupId"
+      - product: alb
+        action: AddServersToServerGroup
+        params:
+          ServerGroupId: "${server_group_id}"
+          Servers.1.ServerId: "${ecs_instance_id_1}"
+          Servers.1.ServerType: "Ecs"
+          Servers.1.Port: 80
+          Servers.2.ServerId: "${ecs_instance_id_2}"
+          Servers.2.ServerType: "Ecs"
+          Servers.2.Port: 80
+      # HTTP 80 listener, forwarding straight to the server group.
+      # HTTPS is deliberately NOT configured: a 443 listener needs an SSL certificate, and both the
+      # certificate and the filed domain it requires are OUTSIDE this package (2026-08-27 scope decision).
+      # Do NOT add a cert step, do NOT call any `cas` API, do NOT offer to apply for a certificate.
+      # The wrap-up card tells the user how to add HTTPS themselves once they have a domain + cert.
+      - product: alb
+        action: CreateListener
+        params:
+          LoadBalancerId: "${alb_id}"
+          ListenerProtocol: "HTTP"
+          ListenerPort: 80
+          DefaultActions.1.Type: "ForwardGroup"
+          DefaultActions.1.ForwardGroupConfig.ServerGroupTuples.1.ServerGroupId: "${server_group_id}"
+      - product: alb
+        action: GetLoadBalancerAttribute
+        params:
+          LoadBalancerId: "${alb_id}"
+        output_vars:
+          alb_dns: "DNSName"
+    report: |
+      ✓ 负载均衡已就位！
+        ALB：${alb_dns}
+        HTTP 监听：端口 80（直转后端）
+        后端：2 台 ECS 已挂载
+
+      💡 后续绑域名时 CNAME 指向这个 ALB 地址。
+
+  # ─── Step 4: ESS auto-scaling ───
+  - name: "配置弹性伸缩（突发时自动加第3台）"
+    type: api
+    product: ess
+    action: CreateScalingGroup
+    params:
+      RegionId: "${region}"
+      ScalingGroupName: "OPC-Pro-Burst-ESS"
+      # the VPC is implied by VSwitchId; CreateScalingGroup does not accept a --vpc-id parameter
+      VSwitchId: "${vswitch_id}"
+      MinSize: 2
+      MaxSize: 3
+      # usually 2 instances, up to 3 on burst
+      DefaultCooldown: 300
+      # 5-minute cooldown, prevents frequent scaling
+      LoadBalancerIds: '["${alb_id}"]'
+      # ⚠️ ESS associates the ALB ServerGroupId
+      # at execution time this may need AttachAlbServerGroups
+    output_vars:
+      scaling_group_id: "ScalingGroupId"
+    post_actions:
+      # ESS CreateScalingGroup does not support tagging at creation + auto-launched instances do not inherit the scaling-group tag,
+      # so tag it immediately after creation via TagResources, otherwise the Manage/Teardown statements (StringEquals acs:ResourceTag) all ImplicitDeny.
+      - product: ess
+        action: TagResources
+        params:
+          RegionId: "${region}"
+          ResourceType: "scalinggroup"
+          ResourceId.1: "${scaling_group_id}"   # ⚠️ CLI flag is --resource-id (singular) despite the API name ResourceIds
+          # ESS TagResources uses singular param names Tag.N.Key/Value (measured on aliyun CLI 3.4.1), not the plural Tags.N
+          Tag.1.Key: "opc:managed"
+          Tag.1.Value: "true"
+          Tag.2.Key: "opc:sku"
+          Tag.2.Value: "pro_burst"
+      # Create the scaling configuration (defines the spec of newly-launched ECS)
+      - product: ess
+        action: CreateScalingConfiguration
+        params:
+          ScalingGroupId: "${scaling_group_id}"
+          ScalingConfigurationName: "OPC-Pro-Burst-Config"
+          InstanceType: "ecs.c9i.2xlarge"
+          ImageId: "${state.resources.ecs.image_id}"
+          SecurityGroupId: "${security_group_id}"
+          SystemDiskCategory: "cloud_essd"
+          SystemDiskSize: 40
+          InternetChargeType: "PayByTraffic"
+          InternetMaxBandwidthOut: 100
+          InstanceName: "OPC-Pro-Burst-ESS-Node"
+          # Removed the original Tags: '[{"Key":"opc:managed","Value":"true"},...]' —
+          # E2E measured: the Tags param of CreateScalingConfiguration does NOT tag the instances ESS auto-launches,
+          # so leaving Tags in is misleading (implying they're tagged). Honest approach: remove the param; launched instances have NO opc:managed tag.
+          # Security-equivalence argument:
+          #   ① the ScalingGroup itself is tagged via the ess:TagResources post_action (step above); ownership is judged at the ScalingGroup level;
+          #   ② the temporary instances ESS launches are fully lifecycle-managed by the ScalingGroup (ess:RemoveInstances goes through DetachInstances),
+          #      not entering the DenyUntaggedModify statement's misjudgment scope;
+          #   ③ a user SSHing into a launched instance for manual changes is outside RAM policy scope (an app-layer risk), unrelated to tag isolation;
+          #   ④ at teardown, DeleteScalingGroup auto-reclaims all launched instances, no need to rely on instance-level tags.
+          # If later changed to an ESS Lifecycle Hook + Cloud Assistant post-tag after InService, revisit this note.
+          # UserData placeholder: auto-pull the deploy package from OSS and start the app
+          # In practice the deploy skill replaces ${app_oss_path} and ${app_start_cmd} in Phase 0.6
+          # and base64-encodes it into UserData (CreateScalingConfiguration requires base64)
+          # Default script logic: ① ossutil configures RAM Role credentials (ECS instance role, no AK needed)
+          #              ② ossutil cp -r oss://${app_oss_path} /opt/app
+          #              ③ cd /opt/app && run ${app_start_cmd} (e.g. systemctl start opc-app)
+          # When the user skips app deployment (just wants empty ECS for ops) → leave UserData empty
+          UserData: "${ess_node_userdata_b64}"
+          # This variable is assembled in the deploy skill main flow:
+          #   ess_node_userdata_b64 = base64(scripts/ess-node-bootstrap.sh)
+          # The script uses strict mode internally (set -euo pipefail) + writes failures to /var/log/opc-bootstrap.err
+        # Must capture ScalingConfigurationId for the downstream EnableScalingGroup
+        output_vars:
+          scaling_config_id: "ScalingConfigurationId"
+      # Enable the scaling group
+      - product: ess
+        action: EnableScalingGroup
+        params:
+          ScalingGroupId: "${scaling_group_id}"
+          ActiveScalingConfigurationId: "${scaling_config_id}"
+      # Create the scale-out rule (CPU > 80% → add one)
+      - product: ess
+        action: CreateScalingRule
+        params:
+          ScalingGroupId: "${scaling_group_id}"
+          ScalingRuleName: "scale-out-cpu80"
+          AdjustmentType: "QuantityChangeInCapacity"
+          AdjustmentValue: 1
+          Cooldown: 300
+        output_vars:
+          scale_out_rule_ari: "ScalingRuleAri"   # used by the CloudMonitor alarm's AlarmActions
+      # Create the scale-in rule (CPU < 30% → remove one)
+      - product: ess
+        action: CreateScalingRule
+        params:
+          ScalingGroupId: "${scaling_group_id}"
+          ScalingRuleName: "scale-in-cpu30"
+          AdjustmentType: "QuantityChangeInCapacity"
+          AdjustmentValue: -1
+          Cooldown: 300
+        output_vars:
+          scale_in_rule_ari: "ScalingRuleAri"
+      # ─── Use the ESS built-in CreateAlarm API ───
+      # CMS PutResourceMetricRule's Webhook field expects an HTTP URL not an ARN; early misuse caused silent failure.
+      # ESS CreateAlarm is the correct wiring: AlarmAction.N (RepeatList) takes the ScalingRuleAri.
+      # ⚠️ RepeatList flag format in CLI 3.4.x plugin mode (E2E-measured, corrected):
+      #    the `.N` suffix form (--AlarmAction.1 / --alarm-action.1) is REJECTED with `unknown flag`.
+      #    Two forms DO work: a JSON array (--alarm-action '["ari:acs:ess:..."]') and, for struct-shaped
+      #    params, inline key=value pairs (e.g. --tag Key=opc:managed Value=true). Prefer the JSON array
+      #    for plain ID lists; both were verified against vpc/ecs tag-resources.
+      - product: ess
+        action: CreateAlarm
+        params:
+          RegionId: "${region}"
+          ScalingGroupId: "${scaling_group_id}"
+          Name: "opc-pro-burst-cpu-out"
+          MetricName: "CpuUtilization"
+          MetricType: "system"
+          Period: 60
+          Statistics: "Average"
+          ComparisonOperator: ">="
+          Threshold: 80
+          EvaluationCount: 5
+          AlarmAction.1: "${scale_out_rule_ari}"
+        output_vars:
+          alarm_task_id_out: "AlarmTaskId"
+      - product: ess
+        action: CreateAlarm
+        params:
+          RegionId: "${region}"
+          ScalingGroupId: "${scaling_group_id}"
+          Name: "opc-pro-burst-cpu-in"
+          MetricName: "CpuUtilization"
+          MetricType: "system"
+          Period: 300
+          Statistics: "Average"
+          ComparisonOperator: "<="
+          Threshold: 30
+          EvaluationCount: 3
+          AlarmAction.1: "${scale_in_rule_ari}"
+        output_vars:
+          alarm_task_id_in: "AlarmTaskId"
+    report: |
+      ✓ 弹性伸缩已配置！
+        伸缩组：${scaling_group_id}
+        规则：平时 2 台 → CPU>80% 持续 5 分钟加到 3 台 → CPU<30% 持续 15 分钟缩回 2 台
+        触发机制：CloudMonitor 报警自动调用伸缩规则
+        新机器规格：c9i 8核16G（与常驻机一致）
+        费用：ESS + CloudMonitor 基础监控均免费，只付被拉起的 ECS 按量费用（约 ¥1/小时）
+
+  # ─── Step 5: RDS HA ───
+  - name: "创建客户档案柜（RDS 高可用版 4核8G）"
+    type: api
+    product: rds
+    action: CreateDBInstance
+    params:
+      RegionId: "${region}"
+      ZoneId: "${zone_id}"
+      Engine: "MySQL"
+      EngineVersion: "8.0"
+      DBInstanceClass: "mysql.n2.large.2c"
+      # pro_burst default binding: HA 4C8G general_essd 200G (Beijing measured ¥1262/month)
+      DBInstanceStorage: 200
+      DBInstanceStorageType: "general_essd"
+      DBInstanceNetType: "Intranet"
+      VPCId: "${vpc_id}"
+      VSwitchId: "${vswitch_id}"
+      SecurityIPList: "127.0.0.1/32"
+      # lock with 127.0.0.1/32 at creation (no external IP reachable),
+      # then clear the allowlist immediately after post_actions sets up security-group authorization, avoiding both IP-allowlist and security-group authorization coexisting
+      # the old value "${ecs_private_ip_1}/32,${ecs_private_ip_2}/32" is now meaningless (switched to security-group authorization)
+      # removed the original 10.0.0.0/24 range authorization, switched to security-group authorization (see post_actions)
+      # ESS-launched ECS automatically gain RDS-connect rights by inheriting the security group, no need to open a whole IP range
+      PayType: "Prepaid"
+      Period: "Month"
+      UsedTime: "1"
+      DBInstanceDescription: "OPC-Pro-Burst-RDS-HA"
+      Category: "HighAvailability"
+    wait_until:
+      product: rds
+      action: DescribeDBInstanceAttribute
+      params:
+        DBInstanceId: "${rds_instance_id}"
+      condition: "Items.DBInstanceAttribute[0].DBInstanceStatus == Running"
+      timeout_seconds: 600
+      poll_interval_seconds: 20
+    output_vars:
+      rds_instance_id: "DBInstanceId"
+    post_actions:
+      # The RDS AddTagsToResource API requires lowercase Tag.1.key/Tag.1.value
+      - product: rds
+        action: AddTagsToResource
+        params:
+          RegionId: "${region}"
+          DBInstanceId: "${rds_instance_id}"
+          Tag.1.key: "opc:managed"
+          Tag.1.value: "true"
+      - product: rds
+        action: CreateAccount
+        params:
+          DBInstanceId: "${rds_instance_id}"
+          AccountName: "opc_admin"
+          AccountPassword: "${generated_password}"
+          AccountType: "Normal"  # least privilege
+      # Aligned with all RDS yamls — create the database first, then grant
+      - product: rds
+        action: CreateDatabase
+        params:
+          DBInstanceId: "${rds_instance_id}"
+          DBName: "opc_app"
+          CharacterSetName: "utf8mb4"
+      # Grant ReadWrite only
+      - product: rds
+        action: GrantAccountPrivilege
+        params:
+          DBInstanceId: "${rds_instance_id}"
+          AccountName: "opc_admin"
+          DBName: "opc_app"
+          AccountPrivilege: "ReadWrite"
+      # Use security-group authorization instead of the 10.0.0.0/24 IP range (ESS-launched ECS connect to RDS by inheriting the security group)
+      - product: rds
+        action: ModifySecurityGroupConfiguration
+        params:
+          DBInstanceId: "${rds_instance_id}"
+          SecurityGroupId: "${security_group_id}"
+      # After security-group authorization, clear the IP allowlist (remove the 127.0.0.1/32 placeholder) to avoid dual authorization
+      - product: rds
+        action: ModifySecurityIps
+        params:
+          DBInstanceId: "${rds_instance_id}"
+          SecurityIps: ""    # clear → afterwards only security-group authorization applies
+          ModifyMode: "Cover"
+      - product: rds
+        action: DescribeDBInstanceNetInfo
+        params:
+          DBInstanceId: "${rds_instance_id}"
+        output_vars:
+          rds_connection_string: "DBInstanceNetInfos.DBInstanceNetInfo[0].ConnectionString"
+          rds_port: "DBInstanceNetInfos.DBInstanceNetInfo[0].Port"
+    report: |
+      ✓ 高可用数据库已就绪！
+        连接地址：${rds_connection_string}:${rds_port}
+        用户名：opc_admin（Normal + ReadWrite，密码已单次告知，未保存到任何文件）
+        配置：MySQL 8.0 · HA 双节点 · 4核8G · 200GB 数据存储空间
+        访问控制：用安全组授权（ESS 弹性扩容出来的服务器自动有连接权，无需开整段 IP）
+
+  # ─── Step 6: OSS 500GB (three-layer protection) ───
+  - name: "创建大仓库（OSS 500GB · 三层保护）"
+    type: api
+    product: oss
+    action: PutBucket
+    # ⚠️ **This step runs LAST — it is Pass 3c in provision.md, NOT wherever it sits in this file.**
+    # It depends on a purchase only the user can make, so all `type: api` steps (Pass 3a) and all
+    # `type: manual` hand-holding (Pass 3b) come FIRST. Never let this step block them.
+    # Precondition: read state.self_purchase.oss_package
+    #   bought / already_active → attempt directly
+    #   deferred                → emit the ONE permitted reminder, wait, then attempt
+    # 🔍 The activation check is a READ: on an unactivated account `ossutil ls` FAILS 403 UserDisable
+    #   (EC 0003-00000801) — E2E-measured 2026-09-16. On an ACTIVATED account the same reads succeed
+    #   (`ossutil ls` → "Bucket Number is: 0", `api list-buckets` → full XML, `get-bucket-info` → 404).
+    #   This step still CREATES the bucket (the deliverable, not a probe); creating a bucket is FREE.
+    # On 403 UserDisable → OSS not activated. NOT a permission problem: no policy JSON, no ERROR GATE
+    #   three-option menu, no retry loop. Say once that the storage package purchase also activates the
+    #   service, keep everything already created, and wait. Retry once when the user confirms.
+    # Partial success is acceptable: if only the bucket is missing, the deployment is NOT a failure —
+    #   never tear down working paid infrastructure over one unpurchased storage package.
+    # `aliyun ossutil` = ossutil 2.x: fs-style verbs (`mb`) + API-level ones (`api put-bucket-*`).
+    # The legacy `oss` verb is deprecated. All E2E-verified on CLI 3.4.11.
+    params:
+      BucketName: "opc-${random_suffix}"
+      RegionId: "${region}"
+      StorageClass: "Standard"
+      DataRedundancyType: "LRS"
+      # Must match the 500 GB package bought at Step 1.3 — a ZRS package does not offset LRS storage.
+    cli_command: |
+      aliyun --profile opc ossutil mb oss://opc-${random_suffix} --region ${region} --acl private --storage-class Standard --redundancy-type LRS
+    output_vars:
+      oss_bucket: "opc-${random_suffix}"
+      oss_endpoint: "oss-${region}.aliyuncs.com"
+    post_actions:
+      # Layer 3 (block public access) is ON BY DEFAULT at creation — verified by read-back, not set by a call.
+      - product: oss
+        action: PutBucketEncryption
+        cli_command: |
+          aliyun --profile opc ossutil api put-bucket-encryption --region ${region} --bucket ${oss_bucket} --server-side-encryption-rule '{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}'
+      - product: oss
+        action: PutBucketVersioning
+        cli_command: |
+          aliyun --profile opc ossutil api put-bucket-versioning --region ${region} --bucket ${oss_bucket} --versioning-configuration '{"Status":"Enabled"}'
+      - product: oss
+        action: PutBucketTagging
+        cli_command: |
+          aliyun --profile opc ossutil api put-bucket-tags --region ${region} --bucket ${oss_bucket} --tagging '{"TagSet":{"Tag":[{"Key":"opc:managed","Value":"true"},{"Key":"opc:sku","Value":"pro_burst"}]}}'
+      - product: oss
+        action: GetBucketInfo
+        # BlockPublicAccess must read back true
+        cli_command: |
+          aliyun --profile opc ossutil api get-bucket-info --region ${region} --bucket ${oss_bucket}
+    report: "✓ 大仓库已开通（${oss_bucket}，500GB，¥54/月 · 三层保护：加密+版本+阻断公共访问）"
+
+  - name: "开通全球加速 + 安全防护（ESA 标准版）"
+    type: api
+    product: esa
+    action: PurchaseRatePlan
+    # ESA standard = medium. List price ¥375/month; the actual charge depends on which
+    # promotion the ACCOUNT qualifies for, and the discount is applied SERVER-SIDE automatically —
+    # PurchaseRatePlan has no promo parameter at all (verified 2026-08-26: --rule-desc-id and
+    # every similar spelling are silently DROPPED from the request, not rejected).
+    # So do NOT try to pass a promo id, and do NOT quote a price from this file.
+    # Get the real number from: aliyun esa describe-rate-plan-price --plan-name medium --period 1 --amount 1
+    #   --endpoint esa.cn-hangzhou.aliyuncs.com   → read PriceModel.RatePlan.PlanPriceList[0].Price
+    # Measured on one account: TotalPrice 375.0 / DiscountPrice 255.0 / Price 120.0, rule
+    # RuleDescId 20958767「产品新用户专享优惠，限购1个」. Eligibility is PER-ACCOUNT (same trap as the
+    # ECS ¥99/yr promo), so another account may legitimately see ¥375. Always inquire, never assume.
+    # CLI: aliyun esa purchase-rate-plan --plan-name medium --charge-type PREPAY --auto-pay true --period 1 [--force by version-guard]
+    params:
+      PlanName: "medium"
+      ChargeType: "PREPAY"
+      AutoPay: true
+      AutoRenew: false  # the ¥375/month paid tier must disable auto-renew
+      Period: 1
+    output_vars:
+      esa_instance_id: "InstanceId"
+    report: |
+      ✓ 全球加速+安全防护已激活（ESA 标准版，成交金额与付款清单里那一笔一致——即下单前实时询价所得，不是本文件里的估值）
+        实例 ID：${esa_instance_id}
+        包含：全国加速 + DDoS 防护 + WAF + Bot 管理
+    fallback_manual: |
+      API 失败时：👉 https://esa.console.aliyun.com/commonBuy
+      ⚠️ 选「标准版」。页面会显示你账号实际能拿到的价格（标价 ¥375/月，有优惠资格则更低），以页面显示为准。
+
+  # ─── Step 7-9: manual steps ───
+  - name: "开通 AI 能力（Token Plan AI 模型订阅计划 标准版）"
+    type: manual
+    instructions: |
+      请打开百炼控制台：👉 https://common-buy.aliyun.com/token-plan
+      选择「标准版」（25,000 credits/月，¥198/月）→ 确认订购。
+      完成后告诉我"好了"。
+    report: "✓ AI 能力已激活"
+
+  - name: "开通存储空间（阿里云盘企业版 500GB）"
+    type: manual
+    instructions: |
+      请打开阿里云盘企业版购买页：
+      👉 https://common-buy.aliyun.com/?commodityCode=pds_trc_public_cn&regionId=cn-beijing
+
+      页面选择：
+      ① 类型 → 网盘空间（页面默认是「CDE Agent」，一定要切到「网盘空间」）
+      ② 用户数 → 5 人
+      ③ 存储空间 → 500GB
+      ④ 用户增量权益包 / 存储扩容权益包 → 都保持 0，不要加（加了会在套餐月费之外多扣钱）
+      ⑤ 购买时长 → 1 月（¥16.58）或 1 年（¥16.58 × 12 ≈ ¥199）
+      ⑥ 确认付款
+
+      完成后告诉我"好了"。
+    report: "✓ 存储空间已激活（500GB）"
+summary_template: |
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🎉 全部就绪！你的 Pro Burst 弹性架构已创建完成
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  🏠 AI 助理（OpenClaw）：去 https://swas.console.aliyun.com/ → 找到「OPC-Pro-Burst-OpenClaw」→「应用详情」→「登录 Web UI」按钮
+  📦 业务 ECS（常驻 2 台，弹性到 3 台）：
+     #1 ${ecs_public_ip_1}（c9i 8核16G）
+     #2 ${ecs_public_ip_2}（c9i 8核16G）
+     #3 [弹性伸缩自动拉起]
+  🔀 负载均衡 ALB：${alb_dns}
+  📈 弹性伸缩 ESS：CPU>80% 加机器 / CPU<30% 缩机器（CloudMonitor 报警自动触发）
+  🗄️ 数据库 RDS HA：${rds_connection_string}:${rds_port}
+  📦 OSS 500GB：${oss_bucket}
+  🤖 Token Plan AI 模型订阅计划（标准版）25k/月
+  📁 阿里云盘 500GB
+  🌐 ESA 标准版
+
+  💰 费用：¥3258.19/月（2台常驻）+ 弹性ECS按需 + ALB按量
+
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  接下来：
+  1. 打开 OpenClaw（走上面控制台入口）
+  2. 让 AI 助理帮你部署代码到两台 ECS
+  3. 绑域名 CNAME → ${alb_dns}
+  
+  💡 弹性伸缩工作原理：
+     正常时 2 台 ECS 运行 → 流量突增 CPU>80% →
+     ESS 自动拉起第 3 台（约 2 分钟就绪）→ ALB 自动加入分发 →
+     流量回落 CPU<30% 持续 5 分钟 → 第 3 台自动释放
+
+  🌐 站点当前走 HTTP（80 端口）。想让访客用 https:// 打开，需要两样套餐外的东西：
+     一个已备案的域名 + 一张 SSL 证书（阿里云数字证书服务，有免费 DV 也有付费版）。
+     两样都不在本套餐内、也不由我代办。备齐之后你可以自己在 ALB 控制台加一个 443 监听、
+     挂上证书即可，不影响已经开好的任何资源。
+
+notes:
+  - "Differences from pro_steady: ECS 4C8G→8C16G (+¥744) + ESS auto-scaling (free service + on-demand ECS fee)"
+  - "c9i.2xlarge = 8C16G compute-type"
+  - "ESS min=2 max=3: at most 3 instances, to avoid uncontrolled cost blow-up"
+  - "ESS-launched ECS is pay-as-you-go (≈¥1.06/hour), not monthly"
+  - "RDS allowlist switched to security-group authorization (ModifySecurityGroupConfiguration); ESS-launched ECS gain connect rights by inheriting the security group, no need to open the 10.0.0.0/24 range"
+  - "ESS cooldown 300 seconds = no repeat scaling within 5 minutes, prevents flapping"
+  - "⚠️ The ImageId in the ESS scaling configuration must match the main ECS, otherwise launched instances have a different environment"
+  - "⚠️ In real deployment, configure the ESS UserData script so launched ECS auto-pull the code and start the service"
+
