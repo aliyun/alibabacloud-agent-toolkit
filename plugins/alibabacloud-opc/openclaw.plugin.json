@@ -1,0 +1,14 @@
+{
+  "id": "alibabacloud-opc",
+  "name": "Alibaba Cloud OPC Package Selection and Deployment",
+  "version": "0.0.2",
+  "description": "Alibaba Cloud OPC (one-person company) package selection and provisioning for solo developers, with an itemized monthly cost confirmation before any charge.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "skills": [
+    "skills"
+  ]
+}

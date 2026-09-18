@@ -1,0 +1,19 @@
+{
+  "name": "alibabacloud-opc",
+  "version": "0.0.2",
+  "description": "Alibaba Cloud OPC (one-person company) package selection and provisioning for solo developers, with an itemized monthly cost confirmation before any charge.",
+  "displayName": "Alibaba Cloud OPC Package Selection and Deployment",
+  "author": {
+    "name": "Alibaba Cloud"
+  },
+  "keywords": [
+    "alibabacloud",
+    "aliyun",
+    "opc"
+  ],
+  "homepage": "https://github.com/aliyun/alibabacloud-agent-toolkit",
+  "repository": "https://github.com/aliyun/alibabacloud-agent-toolkit",
+  "license": "Apache-2.0",
+  "hooks": "./hooks/qoderwork-hooks.json",
+  "mcpServers": "./.mcp.json"
+}

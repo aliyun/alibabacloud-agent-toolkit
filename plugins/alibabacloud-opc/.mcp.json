@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "alibabacloud-opc": {
+      "command": "uvx",
+      "args": [
+        "alibabacloud.mcp-proxy@latest"
+      ]
+    }
+  }
+}

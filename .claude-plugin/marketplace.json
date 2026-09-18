@@ -48,6 +48,18 @@
       "name": "alibabacloud-ecs-ops",
       "source": "./plugins/alibabacloud-ecs-ops",
       "version": "0.0.13"
+    },
+    {
+      "category": "cloud",
+      "description": "Alibaba Cloud OPC (one-person company) package selection and provisioning for solo developers, with an itemized monthly cost confirmation before any charge.",
+      "keywords": [
+        "alibabacloud",
+        "aliyun",
+        "opc"
+      ],
+      "name": "alibabacloud-opc",
+      "source": "./plugins/alibabacloud-opc",
+      "version": "0.0.2"
     }
   ]
 }
