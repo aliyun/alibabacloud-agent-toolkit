@@ -1,0 +1,767 @@
+# Telemetry Hooks
+
+> ## ⚠️ Canonical Source of Truth
+>
+> **This directory (`plugins/alibabacloud-domain/hooks/`) is the single source
+> of truth for the hooks implementation across the entire toolkit.** Future
+> plugins (e.g. `alibabacloud-agent`, `alibabacloud-data-analytics`) MUST
+> copy from here verbatim. Do not edit hook code in other plugins. If you
+> need to change behavior, edit it here and re-sync to consumers.
+>
+> Validate the layout with: `bash tools/dev-hooks/verify-hooks.sh`
+>
+> Background: previously this code lived under `tools/hooks/` and each
+> plugin held a git symlink to it. The Claude Code plugin marketplace did
+> not preserve cross-directory symlinks during install, so end users got an
+> empty `hooks/` directory and hooks never fired. The fix is to ship hooks
+> as a real directory inside each plugin, with `alibabacloud-domain` as the
+> authoritative copy that all other plugins mirror.
+
+Anonymized usage telemetry shared by all `alibabacloud-*` plugins in this
+repository. Captures per-call hook events from agent clients (Claude Code,
+Codex CLI, VS Code, and the Qoder family; Copilot CLI remains a Phase 2 stub),
+queues each event as a file on disk, and lets one bounded background worker
+upload them with the evolving `alibabacloud.mcp-proxy@latest plugin-telemetry`
+CLI.
+
+Per-client event coverage:
+
+| Client       | Config file                | Events subscribed                                                                 |
+| ------------ | -------------------------- | --------------------------------------------------------------------------------- |
+| Claude Code  | `hooks.json`               | `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop`, `StopFailure`, `UserPromptSubmit` (6) |
+| Codex CLI    | `codex-hooks.json`         | `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop` (4)                       |
+| Qoder family | `qoderwork-hooks.json`     | `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop` (4 — same as Codex)       |
+| VS Code      | `../com.github.copilot/hooks/hooks.json` | `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop` (4 — same as Codex) |
+
+The Qoder family, Codex and VS Code share the same 4-event minimal set; this
+yields the same per-tool-call, per-prompt, per-turn granularity as Claude Code's
+6-event set (Claude's extra two events — `PostToolUseFailure` and
+`StopFailure` — are merged into the success-path scripts on Qoder /
+Codex / VS Code). `UserPromptSubmit` catches direct slash-style skill invocations
+(e.g. `/alibabacloud-domain:foo args...`) that some clients submit as plain
+prompts instead of firing the `Skill` tool.
+
+One config file does not mean one client name: QoderWork, qodercli, qoderIDE
+and QwenWork all install `qoderwork-hooks.json` but each reports its own
+`client`, resolved from the environment. See [Client detection](#client-detection).
+
+## Qoder family install
+
+Qoder-family hosts have only a user-scope settings file (no project scope);
+for QoderWork that is `~/.qoderwork/settings.json`. Hook registration is
+handled automatically by `npx openplugin`.
+
+The hook configuration uses the host-provided `${QODER_PLUGIN_ROOT}` variable,
+prefixes each command with `QODER_WORK=1` so the same hook scripts classify the
+client correctly, and can be installed idempotently without changing hooks
+owned by other plugins.
+
+`QODER_WORK=1` only says "some Qoder-family host". Hosts that know their own
+product additionally inject `QODER_WORK_INTEGRATION_MODE`,
+`QODER_WORK_INTEGRATION_PRODUCT`, `QODER_PRODUCT_ID`, `VSCODE_BRAND`,
+`QODER_AGENT`, `QODER_HOOK_SOURCE` and `QODER_IDE`, which the hook scripts
+use to report the concrete client instead of the generic `qoderwork`. See
+[Client detection](#client-detection).
+
+## Prerequisites
+
+The hook handlers and queue worker require `python3`. Uploads are resolved by
+`uvx`, so `uv` must also be installed and available on `PATH`:
+
+```bash
+# Verify
+python3 --version
+uvx --version
+```
+
+Verify that the current MCP proxy exposes the telemetry subcommand through its
+default executable:
+
+```bash
+uvx alibabacloud.mcp-proxy@latest plugin-telemetry --help
+```
+
+If uploader resolution fails, nothing is lost inline: the event file stays in
+`pending/`, is retried up to the retry budget, then dead-lettered into
+`failed/`. The agent is never blocked either way.
+
+## Quick start
+
+Telemetry is on by default. Three controls:
+
+| Want to                    | Do                                                                                          |
+| -------------------------- | ------------------------------------------------------------------------------------------- |
+| Disable for current shell  | `export ALIBABACLOUD_TELEMETRY=false`                                                       |
+| Diagnose missing events    | `export ALIBABACLOUD_TELEMETRY_DEBUG=1` then `tail -F <state-dir>/<client>/debug.log`       |
+| Verify before sending      | `export ALIBABACLOUD_TELEMETRY_DRY_RUN=1` (logs the would-be upload arguments instead of queueing them) |
+
+`<state-dir>` defaults to `~/.cache/alibabacloud-agent-toolkit/telemetry`.
+
+## Privacy
+
+We collect:
+
+- Event types (skill invocation, MCP tool use, CLI use, ...)
+- Durations (start / end timestamps)
+- Sanitized error class names
+- Plugin / skill / tool names
+- Cloud `RequestId` / `PopRequestId` (when present)
+
+We **never** collect:
+
+- AccessKey ID, AccessKey Secret, SecurityToken, Bearer / OAuth tokens
+- Real names, phone numbers, emails, ID numbers
+- Database passwords, private keys, certificate bodies
+- Internal IPs, hostnames, full file paths under `/Users/<name>` etc.
+- Raw user prompts or full tool outputs
+
+Sanitization is a second line of defense. The primary defense is the field
+allowlist defined in `telemetry_design.md` — only those fields are ever sent.
+
+### What gets uploaded
+
+Each hook fire writes one JSON file into
+`<state-dir>/<client>/telemetry-queue/pending/` and returns immediately. The
+single background worker later turns each queued event into one invocation of
+the uploader, so the agent never waits:
+
+```
+uvx alibabacloud.mcp-proxy@latest plugin-telemetry \
+    --client-name <claude-code|codex|vscode|copilot-cli|qoderwork|qwenworkcn|qoder_cli_0|…> \
+    --event-type <skill_invocation|subagent_dispatch|reference_file_read|cli_command_use|mcp_tool_use> \
+    --start-timestamp <ISO8601> \
+    --end-timestamp <ISO8601> \
+    --tool-name <tool> \
+    --session-id <session> \
+    --status <success|failure> \
+    --turn <N> \
+    [--mcp-tool ...] [--skill-name ...] [--plugin-name ...] \
+    [--tool-request-id ...] [--cli-command ...] [--event-tag ...] \
+    [--error-message ...]
+```
+
+### Opt out
+
+```bash
+export ALIBABACLOUD_TELEMETRY=false
+```
+
+## Configuration
+
+| Variable                            | Default                                                | Effect                                                                                                                          |
+| ----------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `ALIBABACLOUD_TELEMETRY`            | `true`                                                 | Set to `false` to disable all hook uploads (each hook returns immediately)                                                      |
+| `ALIBABACLOUD_TELEMETRY_DEBUG`      | `0`                                                    | When `1`, capture every hook fire decision into `<state-dir>/<client>/debug.log`                                                |
+| `ALIBABACLOUD_TELEMETRY_DRY_RUN`    | `0`                                                    | When `1`, log the would-be upload arguments without queueing or uploading (still writes to `debug.log`)                         |
+| `ALIBABACLOUD_TELEMETRY_STATE_DIR`  | `~/.cache/alibabacloud-agent-toolkit/telemetry`        | Override state directory; auto-falls back to `/tmp/alibabacloud-agent-toolkit-telemetry-<uid>` if home cache is unwritable      |
+| `ALIBABACLOUD_TELEMETRY_TRACE_PAYLOAD` | `0`                                                 | When `1`, dump raw stdin payloads to `<state-dir>/<client>/raw-payloads/<event>-<ts>-<pid>.json` for each hook fire. Use only for diagnosing extraction bugs — files contain the full hook payload (sensitive content possible) and can grow large. |
+| `ALIBABACLOUD_TELEMETRY_MAX_QUEUE`  | `500`                                                  | Queue depth cap. When `pending/` holds more files than this, the worker unlinks the excess and logs `Queue overflow`            |
+| `ALIBABACLOUD_TELEMETRY_MAX_CONCURRENT` | `4`                                              | Upload batch size the worker drains per round                                                                                    |
+| `ALIBABACLOUD_TELEMETRY_UPLOAD_TIMEOUT` | `30`                                               | Hard per-upload timeout in seconds; the uploader's whole process group is killed when it expires                                 |
+| `ALIBABACLOUD_TELEMETRY_MAX_RETRIES` | `2`                                                   | Retry budget per event. Once exhausted the event is dead-lettered into `telemetry-queue/failed/`                                  |
+| `ALIBABACLOUD_TELEMETRY_UPLOADER`   | unset                                                  | Override the uploader argv prefix (test hook). When unset the worker uses `uvx alibabacloud.mcp-proxy@latest plugin-telemetry` |
+| `ALIBABACLOUD_TELEMETRY_WORKER_DEBUG` | `0`                                                  | When `1`, the worker appends progress lines to `<state-dir>/<client>/worker-debug.log`                                            |
+| `ALIBABACLOUD_TELEMETRY_WORKER_STATE_DIR` | unset                                            | Client directory the worker drains. Set automatically by `telemetry_enqueue.py`; not meant to be exported by hand                |
+| `COPILOT_CLI`                       | unset                                                  | Set to `1` to declare the Copilot CLI client (Phase 2 stub)                                                                     |
+| `CODEX_CLI`                         | unset                                                  | Set to `1` to declare the Codex client. `codex-hooks.json` prefixes each registered hook command with this var.                 |
+| `VSCODE_AGENT`                      | unset                                                  | Set to `1` to declare the VS Code client. `com.github.copilot/hooks/hooks.json` sets this var in the `env` of each registered hook command, so the Agent Plugins 1.0 surface reports `vscode` instead of the `claude-code` default. |
+| `QODER_WORK`                        | unset                                                  | Set to `1` to declare a Qoder-family client. The `openplugin` installer prefixes each registered hook command with this var. Yields `qoderwork` unless one of the vars below narrows it down. |
+| `QODER_WORK_INTEGRATION_MODE`       | unset                                                  | Set to `1` by Qoder-family hosts running in integration mode. On its own it still resolves to `qoderwork`. |
+| `QODER_WORK_INTEGRATION_PRODUCT`    | unset                                                  | Highest-priority Qoder-family marker: when non-empty its value becomes the client name verbatim (sanitized), e.g. `qwenworkcn`. |
+| `QODER_PRODUCT_ID`                  | unset                                                  | New Qoder sets `qoder` or `qoder-cn`; both resolve to the stable client name `qoder`. |
+| `VSCODE_BRAND`                      | unset                                                  | Qoder IDE sets `Qoder`; this resolves to `qoder-ide` even though the shared hook command also sets `QODER_WORK=1`. |
+| `QODER_AGENT`                       | unset                                                  | Set to `true` by qodercli / qoderIDE. Combined with the two vars below it resolves to `qoder_<QODER_HOOK_SOURCE>_<QODER_IDE>`. |
+| `QODER_HOOK_SOURCE`                 | unset                                                  | Hook origin reported by a `QODER_AGENT=true` host, e.g. `cli`. Required together with `QODER_IDE`; if either is missing the client falls back to `qoderwork`. |
+| `QODER_IDE`                         | unset                                                  | IDE/workspace discriminator reported by a `QODER_AGENT=true` host, e.g. `0`. Required together with `QODER_HOOK_SOURCE`. |
+
+## Architecture
+
+`plugins/alibabacloud-domain/hooks/` is the canonical source and a real
+directory. `plugins/alibabacloud-spec-ops/hooks/` and
+`plugins/alibabacloud-ecs-ops/hooks/` are byte-identical copies of it, not
+symlinks — the marketplace did not preserve cross-directory links, so end
+users used to receive an empty `hooks/`. Edit the canonical copy, then mirror
+it into the other two plugins and run
+`bash tools/dev-hooks/verify-hooks.sh`, which fails on any symlink or
+divergent copy.
+
+### Hook lifecycle
+
+| Event                | Script                                                | Responsibility                                                                                                                                       |
+| -------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PreToolUse`         | `pre-tool-trace.sh` → `lib/pre_handler.py`            | Record start timestamp under `tool_starts[<key>]` in per-session state                                                                               |
+| `PostToolUse`        | `post-tool-trace.sh` → `lib/post_handler.py`          | Classify tool, detect status, sanitize, queue event for upload                                                                                       |
+| `PostToolUseFailure` | `post-tool-trace.sh` → `lib/post_handler.py`          | Same script; forces `status=failure`. Claude Code routes failed tool calls (including MCP `isError: true`) to this distinct event from successes.   |
+| `Stop`               | `stop-turn-increment.sh` → `lib/stop_handler.py`      | Increment per-session turn counter; opportunistically clean stale state                                                                              |
+| `StopFailure`        | `stop-turn-increment.sh` → `lib/stop_handler.py`      | Same script — applied symmetrically when an API error aborts a turn                                                                                  |
+| `UserPromptSubmit`   | `prompt-trace.sh` → `lib/prompt_handler.py`           | Detect direct slash-style skill invocations like `/alibabacloud-domain:foo args...` and emit them as `skill_invocation` events. (Skill tool calls and SKILL.md reads are already covered by PostToolUse.) |
+
+### Why subscribe to both `PostToolUse` and `PostToolUseFailure`
+
+Claude Code dispatches tool failures to a separate event from successes. A
+hook subscribed only to `PostToolUse` silently misses every failed cloud
+call (`NoPermission`, `IncorrectVSwitchId`, `Throttling`, ...). Subscribing
+to both events with the same script guarantees coverage regardless of how
+Claude Code classifies the result.
+
+### Event classification
+
+`lib/post_handler.py:classify()` filters tool calls to events we care
+about. The filter rule is a single allowlist — any name (skill, subagent,
+MCP tool, file path segment) starting with `alibabacloud` (case-insensitive)
+is "ours":
+
+| Tool input                       | Conditions                                                         | Output `event_type`        |
+| -------------------------------- | ------------------------------------------------------------------ | -------------------------- |
+| `Skill`                          | `tool_input.skill` starts with `alibabacloud`                      | `skill_invocation`         |
+| `Read` / `view` / `read_file`    | path contains `alibabacloud` segment AND ends with `SKILL.md`      | `skill_invocation`         |
+| `Read` / `view` / `read_file`    | same path pattern, file is not `SKILL.md`                          | `reference_file_read`      |
+| `Agent`                          | `tool_input.subagent_type` starts with `alibabacloud`              | `subagent_dispatch`        |
+| `Bash`                           | `tool_input.command` first token is `aliyun`                       | `cli_command_use`          |
+| MCP tool name                    | name contains `alibabacloud` (case-insensitive) or `AlibabaCloud___` | `mcp_tool_use`           |
+| `UserPromptSubmit` (prompt) | prompt starts with `/(alibabacloud-*):<skill>` | `skill_invocation` |
+| anything else                    | —                                                                  | dropped (no upload)        |
+
+`--plugin-name` resolution priority:
+
+1. `<plugin>:` prefix in skill / subagent name (e.g. `alibabacloud-domain:foo` → `alibabacloud-domain`)
+2. File path segment matching `plugins/<plugin>/skills/...`
+3. MCP tool name pattern `mcp__plugin_<plugin>_*`
+4. Otherwise omitted
+
+### Status detection (4-signal OR)
+
+`lib/post_handler.py:detect_status()` short-circuits in priority order:
+
+1. **`tool_response.is_error == true` OR `tool_response.status == "Errored"`** → failure. Tries to extract the deeper error message from `tool_result` (parses up to 16 KB of JSON) before falling back to `tool_response.error / stderr / stdout`.
+2. **Top-level `tool_error` / `error` non-empty** → failure (client-layer crash, timeout).
+3. **`tool_response.exit_code != 0`** → failure (Bash tool path).
+4. **JSON parse on `tool_result[:16384]`**:
+   - `isError`, `Code`, `error`, `Error`, or `status ∈ {errored, error, failed, failure}` → failure
+   - regex match on Aliyun OpenAPI error codes (`InvalidParameter`, `NoPermission`, `Forbidden`, `AccessDenied`, `InvalidAccessKey*`, `Unauthorized`, `RequestTimeout`, `ServiceUnavailable`, `InternalError`, `Throttling`, `QuotaExceeded`) → failure
+   - parse failure + first 500 chars match client-error keywords (`Connection refused`, `EOF`, `timeout`, `failed to`, `unreachable`, `connection reset`, `no route to host`) → failure
+
+Plus an explicit override: when `hook_event_name == "PostToolUseFailure"`,
+status is forced to `failure`.
+
+When status is `failure`, an `error_message` is extracted (Message / first
+non-empty line, sanitized, truncated to 200 chars) and emitted as
+`--error-message`.
+
+### `--tool-request-id` extraction
+
+Looked up across multiple candidate sources in priority order:
+
+1. `tool_result`
+2. `tool_response.stdout`
+3. `tool_response.error`
+4. `tool_response.stderr`
+5. top-level `tool_error`
+6. top-level `error`
+
+The first non-empty extraction wins. For each source we try (a) pure JSON
+parse, (b) parse from the first `{` (handles text-prefixed JSON like
+`"调用成功，但结果是空。\n\n{...}"`), (c) regex extraction on the raw text.
+
+Within a parsed dict (or raw text), key priority is:
+
+1. **PopRequestId family** — `PopRequestId` / `popRequestId` / `pop_request_id` / `pop-request-id`
+2. **RequestId family** — `RequestId` / `requestId` / `request_id` / `request-id`
+
+PopRequestId wins because in Claude Code MCP error envelopes
+(`{"code":...,"data":{"requestId":"<MCP-internal>","popRequestId":"<cloud>"}}`)
+the `requestId` is the MCP protocol's internal call ID while `popRequestId`
+is the Alibaba Cloud OpenAPI Gateway RequestId — the diagnostic ID worth
+surfacing. Successful responses generally expose only `RequestId` (no Pop
+counterpart) and fall through to the secondary family.
+
+Each family is searched at the top level then nested under `data` / `body`
+/ `error` / `result`. If neither family yields a value, the field is
+omitted (we never generate a caller-side UUID).
+
+### Tool normalization (`lib/tool_normalization.py`)
+
+Pre- and post-tool handlers share one normalization layer. Known native
+wrappers (`qw_mcp_call`, `CallMcpTool`, and `mcp_call`) are
+unwrapped into their inner tool and arguments. Client-private wrapper names are
+also supported without pinning their prefix: a structured `toolName` +
+`arguments` payload is unwrapped only for the operational MCP actions
+`CallCLI`, `RunIaC`, and `RunScript`, or when an Alibaba Cloud skill or
+skill-file read independently proves plugin ownership. Known native wrappers
+retain support for all directly owned Alibaba Cloud MCP actions. The
+namespaced Qoder Work metadata lookup and unrelated third-party tools remain
+filtered. A Bash
+command that invokes `mcpx.py call
+CallCLI` with a JSON request containing an `aliyun` command is normalized to
+`AlibabaCloud___CallCLI`; this covers connector-based QwenWork calls while
+preserving native MCP and direct Bash behavior. Parsing uses only `shlex` and
+`json` and never evaluates shell input.
+
+### Sanitization (`lib/sanitize.py`)
+
+Four functions, all bounded:
+
+- `sanitize_error(msg)` — caps prefix at `200 * 4` chars for regex safety, then truncates output to `200` chars. Rules:
+  - Credentials: `(ak|sk|pk|key|secret|password|token|credential|accesskey)\s*=\s*\S+` → `<keyword>=***`
+  - `Bearer <token>` → `***`
+  - `/Users/<name>/`, `/home/<name>/`, `C:\Users\<name>\` → `/<USER>/`
+  - Email, CN mobile, IPv4, UUID v4 → `<REDACTED>`
+- `sanitize_cli(cmd)` — legacy helper: keeps the first 3 whitespace-separated tokens, capped at 120 chars (drops args / values that may carry IDs). Not used by the current event pipeline.
+- `sanitize_aliyun_cli(cmd)` — used for `cli_command_use` (Bash `aliyun ...`) and MCP `AlibabaCloud___CallCLI`. Keeps the operational command tokens and strips only credential flags + values: `--access-key-id`, `--access-key-secret`, `--secret`, `--secret-key`, `--password`, `--passwd`, `--sts-token`, `--security-token` (both `--flag value` and `--flag=value` forms). Shell quoting is parsed as data so multiword credential values are removed as one token; malformed quoting fails closed with no command text. The sanitizer also drops bare `LTAI*` / `STS.*` / JWT tokens as defense-in-depth. Output is capped at 2000 chars. `--endpoint`, `--endpoint-url`, and `--profile` are intentionally kept — they are operational context, not secrets.
+- `sanitize_tool_input(value)` — used for all **non-CallCLI** MCP `AlibabaCloud___*` tools (`ListProducts`, `ListApis`, `ListProductRegions`, `SearchApis`, `SearchDocuments`, `GetDocument`, `GetDocumentTree`, `GrepDocuments`, `GetApiDefinition`, `GenerateCLICommand`, …). JSON-serializes the `tool_input` dict (sorted keys, compact separators, UTF-8 safe) and runs the full `_CRED_PATTERNS` set against the serialized string (AccessKey / STS / JWT / PEM / Bearer / long base64 blobs → `***`). Capped at 4000 chars. The serialized JSON is uploaded via the same `--cli-command` flag (it carries either a shell command for CallCLI, or a JSON-encoded tool input for other MCP tools — distinguish by `--mcp-tool`).
+
+### Bounds
+
+| Limit                        | Value                | Rationale                                                                              |
+| ---------------------------- | -------------------- | -------------------------------------------------------------------------------------- |
+| stdin read cap               | 64 KB                | bash variable / Python `read(N)` ceiling — large `tool_result` truncated, never blocks |
+| JSON parse window            | 16 KB                | covers ~100% of real error responses; <2 ms parse                                      |
+| Error regex window           | 500 chars            | first error line; avoids catastrophic backtracking                                     |
+| `--error-message` length     | 200 chars            | post-sanitization                                                                      |
+| `--cli-command` length       | 2000 / 4000 chars    | 2000 for CallCLI shell command (`sanitize_aliyun_cli`); 4000 for other MCP tools' JSON-encoded inputs (`sanitize_tool_input`) |
+| `pre` / `stop` hook timeout  | 3 s                  | configured in `hooks.json`                                                             |
+| `post` / `post-failure` timeout | 15 s              | the hook only queues an event file; uploading happens in the worker                     |
+| Lock acquisition timeout     | 2 s                  | `_try_flock_exclusive` in `state.py`                                                   |
+| Session state TTL            | 7 days               | auto-cleaned by Stop hook                                                              |
+| Upload queue depth           | 500 events           | `ALIBABACLOUD_TELEMETRY_MAX_QUEUE`; excess is unlinked and logged, never grows unbounded |
+| Upload batch size            | 4 per round          | `ALIBABACLOUD_TELEMETRY_MAX_CONCURRENT`; uploads within a round are sequential         |
+| Upload hard timeout          | 30 s                 | `ALIBABACLOUD_TELEMETRY_UPLOAD_TIMEOUT`; the whole process group is killed on expiry    |
+| Upload retry budget          | 2 per event          | `ALIBABACLOUD_TELEMETRY_MAX_RETRIES`; then dead-lettered to `telemetry-queue/failed/`   |
+| Worker instances             | 1 per client dir     | non-blocking `flock` on `<state-dir>/<client>/telemetry-worker.lock`                   |
+| Dead-letter retention        | 7 days               | `failed/` entries older than this are pruned by the cleanup pass                        |
+| Stale pending retention      | 24 h                 | `pending/` entries older than this are pruned by the cleanup pass                       |
+
+### Bounded queue upload
+
+Hooks never upload inline and never spawn a detached per-event process. Each
+hook writes one JSON file into `<state-dir>/<client>/telemetry-queue/pending/`
+via `lib/telemetry_enqueue.py`, makes sure a worker exists, and returns
+success immediately.
+
+`lib/telemetry_worker.py` is that worker. It holds an exclusive `flock` on
+`<state-dir>/<client>/telemetry-worker.lock`, so at most one worker runs per
+client directory; a second start attempt exits quietly instead of piling up.
+It uploads through `uvx alibabacloud.mcp-proxy@latest plugin-telemetry`, using
+uv's normal package cache while allowing the independently released proxy to
+evolve. Each upload runs in its own process group with a hard timeout and is
+reaped with `killpg`, retries are bounded, and an event that exhausts them
+moves to `telemetry-queue/failed/` as a dead letter rather than being retried
+forever.
+
+This replaced the previous fire-and-forget pattern:
+
+```bash
+( uvx alibabacloud.mcp-proxy@latest plugin-telemetry "${args[@]}" \
+    >/dev/null 2>&1 < /dev/null & ) >/dev/null 2>&1
+disown 2>/dev/null
+```
+
+Detaching with `disown` re-parented every `uvx` process to PID 1, so nothing
+reaped them: with no concurrency cap, no timeout and no retry budget, a busy
+session accumulated thousands of orphans and an unbounded UV cache. Upload
+failures are still invisible to the agent — they land in `debug.log` and
+`worker-debug.log`, never in the user-facing transcript.
+
+## State Files
+
+State is bucketed per client and per session for safe multi-process and
+multi-client operation:
+
+```
+<state-dir>/
+├── claude-code/                       # one bucket per client
+│   ├── debug.log                      # client-scoped diagnostic log
+│   ├── worker-debug.log               # worker progress (ALIBABACLOUD_TELEMETRY_WORKER_DEBUG)
+│   ├── telemetry-worker.lock          # flock — guarantees one worker per client dir
+│   ├── telemetry-queue/               # bounded upload queue, 0700
+│   │   ├── pending/                   # events awaiting upload
+│   │   │   └── <usec>-<rand8>.json    # {"args": {...}, "retries": N, "timestamp": T}
+│   │   └── failed/                    # dead letters that exhausted the retry budget
+│   ├── sessions/
+│   │   ├── <safe-session>.state.json  # per-session state (turn + tool_starts + trace flags)
+│   │   └── <safe-session>.lock        # fcntl exclusive lock file
+│   ├── traces/                        # local audit JSONL (ALIBABACLOUD_TRACE)
+│   │   └── <safe-session>.jsonl       # per-session full-trace audit log
+│   └── raw-payloads/                  # diagnostic only (ALIBABACLOUD_TELEMETRY_TRACE_PAYLOAD)
+│       ├── pre-<ts>-<pid>.json        # raw hook stdin captures, 0600
+│       ├── post-<ts>-<pid>.json
+│       └── stop-<ts>-<pid>.json
+├── codex/                             # (Phase 2 stub)
+├── qoderwork/                         # Qoder-family default
+└── qwenworkcn/                        # one dir per resolved Qoder client
+```
+
+### Local audit trace (`traces/`)
+
+Default ON; set `ALIBABACLOUD_TRACE=false` to disable. Each session gets a
+single `<safe-session>.jsonl` file containing one JSON record per line.
+Files are local-only — never uploaded, never auto-cleaned. Override the
+location with `ALIBABACLOUD_TRACE_DIR=<path>`.
+
+| Event             | When written                                          | Key fields                                                      |
+| ----------------- | ----------------------------------------------------- | --------------------------------------------------------------- |
+| `skill_invocation`| Slash-skill prompt detected (`/alibabacloud-...:skill`) | `tool_name=Skill`, `skill_name`, `plugin_name`                |
+| `tool_start`      | PreToolUse for an alibabacloud-related tool            | `tool_name`, `tool_use_id`, `tool_input`                       |
+| `tool_end`        | PostToolUse / PostToolUseFailure                       | `status`, `error_message`, `request_id`, `duration_ms`, `tool_response`, `truncated` |
+| `prompt`          | Backfilled at Stop when the turn had alibabacloud activity | sanitized `prompt` text, full `start_timestamp` … `end_timestamp` span |
+| `turn_end`        | Always at Stop when the turn had alibabacloud activity | `stop_reason` (`Stop` / `StopFailure`)                          |
+
+All events share `span_id`, `parent_span_id`, `turn`, `session_id`, and
+`client`. The `prompt` event is the root span of each turn (`parent_span_id: null`); every other event in the same turn references it as parent.
+Responses larger than 64 KB are truncated and tagged `"truncated": true`.
+Light sanitization is applied (AK/SK, STS tokens, JWT, PEM keys,
+`accessKeySecret=…`, CN mobile, email).
+
+#### JSONL record field reference
+
+**Common fields** (present on every event):
+
+| Field             | Type     | Description                                                              |
+| ----------------- | -------- | ------------------------------------------------------------------------ |
+| `event`           | `string` | Event type. Enum: `prompt`, `skill_invocation`, `tool_start`, `tool_end`, `turn_end` |
+| `span_id`         | `string` | Unique span identifier for this event                                    |
+| `parent_span_id`  | `string \| null` | Parent span ID. `null` only for `prompt` (root span)            |
+| `turn`            | `int`    | Zero-based turn counter within the session                               |
+| `start_timestamp` | `string` | ISO 8601 with milliseconds, e.g. `2026-05-20T01:48:59.649Z`             |
+| `end_timestamp`   | `string` | ISO 8601 with milliseconds                                               |
+| `session_id`      | `string` | Claude Code session UUID                                                  |
+| `client`          | `string` | Resolved client name: `claude-code`, `vscode`, `copilot-cli`, `codex`, or the concrete Qoder-family name (`qoderwork`, `qwenworkcn`, `qoder_cli_0`, …). See [Client detection](#client-detection). |
+
+**`prompt` event** (backfilled at Stop):
+
+| Field    | Type     | Description                                             |
+| -------- | -------- | ------------------------------------------------------- |
+| `prompt` | `string` | User prompt text (sanitized — credentials replaced with `***`) |
+
+**`skill_invocation` event** (slash-skill `/alibabacloud-*:*`):
+
+| Field         | Type     | Description                                                      |
+| ------------- | -------- | ---------------------------------------------------------------- |
+| `tool_name`   | `string` | Always `"Skill"`                                                 |
+| `skill_name`  | `string` | Qualified skill name, e.g. `alibabacloud-domain:alibabacloud-sdk-usage` |
+| `plugin_name` | `string` | Plugin prefix, e.g. `alibabacloud-domain`                          |
+| `status`      | `string` | Always `"success"`                                               |
+
+**`tool_start` event** (PreToolUse):
+
+| Field         | Type           | Description                                                    |
+| ------------- | -------------- | -------------------------------------------------------------- |
+| `tool_name`   | `string`       | Full MCP tool name, e.g. `mcp__plugin_alibabacloud-domain_alibabacloud-domain_AlibabaCloud___CallCLI` |
+| `tool_use_id` | `string`       | Claude-assigned tool use ID, e.g. `toolu_bdrk_01...`           |
+| `tool_input`  | `object`       | Tool call parameters (sanitized)                               |
+
+**`tool_end` event** (PostToolUse / PostToolUseFailure):
+
+| Field           | Type             | Description                                                          |
+| --------------- | ---------------- | -------------------------------------------------------------------- |
+| `tool_name`     | `string`         | Same as in `tool_start`                                              |
+| `tool_use_id`   | `string`         | Same as in `tool_start`                                              |
+| `status`        | `string`         | Enum: `success`, `failure`                                           |
+| `error_message` | `string \| null` | Classified error code when `status=failure`, e.g. `NoPermission`, `Throttling` |
+| `request_id`    | `string \| null` | Alibaba Cloud `RequestId` extracted from response (if present)       |
+| `duration_ms`   | `int`            | Wall-clock duration from `tool_start` to `tool_end` in milliseconds  |
+| `tool_response` | `array \| string \| null` | Full response body (sanitized). Truncated to string if > 64 KB |
+| `truncated`     | `bool`           | `true` if `tool_response` was truncated due to > 64 KB size          |
+
+**`turn_end` event** (Stop / StopFailure):
+
+| Field         | Type     | Description                                              |
+| ------------- | -------- | -------------------------------------------------------- |
+| `stop_reason` | `string` | Enum: `Stop`, `StopFailure`                              |
+
+#### Span hierarchy example
+
+```
+prompt (span_id=abc, parent_span_id=null)      ← root of this turn
+├── skill_invocation (parent_span_id=abc)      ← if /alibabacloud-xxx skill
+├── tool_start (parent_span_id=abc)
+├── tool_end (parent_span_id=abc)
+├── tool_start (parent_span_id=abc)            ← multiple tools per turn
+├── tool_end (parent_span_id=abc)
+└── turn_end (parent_span_id=abc)
+```
+
+### Path resolution
+
+- `<state-dir>` priority:
+  1. `$ALIBABACLOUD_TELEMETRY_STATE_DIR` (if writable)
+  2. `$HOME/.cache/alibabacloud-agent-toolkit/telemetry` (if writable)
+  3. `/tmp/alibabacloud-agent-toolkit-telemetry-<uid>` (last-resort fallback)
+  4. If none writable, telemetry silently no-ops
+- `<client-name>` is sanitized via `[^A-Za-z0-9_-]` → `_`, capped at 64 **bytes**
+  (UTF-8, so `千问办公` → 12 underscores). Applied identically by the bash
+  wrappers, the python handlers and `lib/state.py:client_dir()`
+- `<safe-session>` = `re.sub(r"[^A-Za-z0-9_-]", "_", session_id)[:120]`
+
+We do **not** SHA-256 the session_id. Claude Code session IDs are UUIDv4 so
+collision probability is negligible (~10⁻²⁵ at realistic volumes); the
+character filter exists only to defend against future format changes or
+non-UUID clients.
+
+### Per-session state schema
+
+```json
+{
+  "session_id": "abc-123-…",
+  "turn": 3,
+  "tool_starts": {
+    "<tool_use_id-or-fallback>": 1763500800123
+  },
+  "updated_ts": "2026-05-19T11:07:42Z"
+}
+```
+
+`tool_starts` is keyed by `tool_use_id` from the hook payload (a UUID
+guaranteed unique by Claude Code per tool call) with sanitized `tool_name`
+as fallback when `tool_use_id` is missing.
+
+### Marker key resolution
+
+Both `pre_handler.py` and `post_handler.py` compute the marker key as:
+
+```python
+marker_key = data.get("tool_use_id") or sanitize(tool_name)
+```
+
+`tool_use_id` is the robust choice because it can never be clobbered by a
+parallel tool of the same name. The sanitized `tool_name` fallback works
+for the common single-tool-per-pre/post case when an older client doesn't
+include the ID.
+
+### Concurrency model
+
+| Concern                                                              | Handling                                                                                                                                                  |
+| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Multiple Claude Code windows sharing the same `<state-dir>`          | Per-session files. Different sessions never touch each other's state.                                                                                     |
+| Stop hook fires concurrently for the same session                    | `fcntl.flock(LOCK_EX)` on `<safe-session>.lock` serializes critical sections. Atomic write via `os.replace(tmp, state)` prevents partial state.            |
+| Pre / Post overlap inside the same session                           | Same lock; `tool_starts[<tool_use_id>]` lets each tool call carry its own marker that can't be clobbered by another tool call's Pre.                       |
+| Multiple clients (Claude Code + Codex + QoderWork) on one machine    | Top-level `<client>` directory keeps state, locks, and debug logs fully isolated.                                                                          |
+| Multiple OS users on a shared host                                   | `/tmp` fallback path includes `<uid>` suffix.                                                                                                              |
+| `fcntl` not available (Windows / non-POSIX)                          | `_try_flock_exclusive` is best-effort with 2 s timeout; on failure we proceed without lock (lossy but never blocks the agent).                            |
+| State file corruption                                                | All loads wrapped in try/except; corrupt JSON → fresh empty state.                                                                                         |
+| Stale state accumulation                                             | Stop hook runs `cleanup_stale_sessions(client, max_age_days=7)` opportunistically; files older than 7 days are removed.                                    |
+
+Verified: `scripts/test-fixtures/stress-test.sh` forks N concurrent Stop
+hook invocations against the same session and asserts the final turn
+counter equals N (zero lost increments). Tested up to N=200.
+
+### Lock primitive (`lib/state.py:SessionState`)
+
+```python
+with SessionState(client, session_id) as st:
+    st.data["turn"] = st.data.get("turn", 0) + 1
+    st.data["tool_starts"][marker_key] = epoch_ms
+# On exit: atomic write of state, lock released.
+```
+
+Properties:
+
+- Exclusive `fcntl.flock` with 2-second timeout
+- State loaded inside the lock to avoid lost updates
+- Atomic write via temp file + `os.replace`
+- Best-effort: if locking is unavailable or write fails, the agent is never
+  blocked or crashed — telemetry simply degrades silently
+- Same primitive used by `pre_handler.py`, `post_handler.py`, and
+  `stop_handler.py` so contention is consistent across all three hooks
+
+### Client detection
+
+The client identity is determined in priority order:
+
+1. `COPILOT_CLI=1` env var → `copilot-cli`
+2. `CODEX_CLI=1` env var → `codex`
+3. Qoder-family env var present → the concrete Qoder client (resolved below)
+4. `VSCODE_AGENT=1` env var → `vscode`
+5. Hook payload contains the literal substring `__vscode` → `vscode`
+6. Hook payload contains the literal substring `"turn_id":` → `codex`
+7. Default → `claude-code`
+
+Every Qoder-family host (qodercli, qoderIDE, QoderWork, QwenWork, …) installs
+the same `qoderwork-hooks.json`, so step 3 resolves the concrete product from
+the environment the host injects:
+
+1. `QODER_WORK_INTEGRATION_PRODUCT` non-empty → that value, e.g. `qwenworkcn`
+   for 千问办公中国版
+2. else `QODER_PRODUCT_ID=qoder|qoder-cn` → `qoder` for New Qoder
+3. else `VSCODE_BRAND=Qoder` → `qoder-ide` for Qoder IDE
+4. else `QODER_AGENT=true` with both `QODER_HOOK_SOURCE` and `QODER_IDE`
+   non-empty → `qoder_<QODER_HOOK_SOURCE>_<QODER_IDE>`, e.g. `qoder_cli_0`
+5. else → `qoderwork`, the legacy default that `QODER_WORK=1` alone yields
+
+Step 5 is only entered when at least one of `QODER_WORK=1`,
+`QODER_WORK_INTEGRATION_MODE=1` or `QODER_AGENT=true` is set, so a plain Claude
+Code session still falls through to `claude-code`.
+
+Steps 4 and 5 both resolve to `vscode`. Step 4 is the one a plugin install
+actually uses: `com.github.copilot/hooks/hooks.json` is the Agent Plugins 1.0
+manifest VS Code reads, and it sets `VSCODE_AGENT=1` in the `env` field of every
+hook command. `env` is part of the hook schema, so the marker reaches the hook
+process whether or not the host shell-parses the command string. Step 5 is the
+older path for a host that marks itself inside the payload instead. Both rank
+below the markers above them, so a default declared by a manifest never
+overrides an identity the host states itself.
+
+The resolved name doubles as the `<state-dir>/<client>/` directory name, so it
+is sanitized with `[^A-Za-z0-9_-]` → `_` and capped at 64. Sanitization is
+byte-wise (UTF-8) on both sides — bash uses `tr -c`, python encodes before
+`re.sub` — so a non-ASCII product name maps to the identical directory instead
+of splitting one client's state across two buckets.
+
+The same logic appears three times: in the bash wrappers (for picking the
+`<state-dir>/<client>/` path), in each `lib/*_handler.py` (for the
+`--client-name` flag value and the `client` field on trace records), and in
+`lib/state.py:client_dir()` (which actually creates `sessions/` and `traces/`),
+so all three stay in sync. `tools/dev-hooks/test-client-detection.sh` asserts
+the implementations agree, that `client_dir()` resolves to the very bucket the
+wrapper wrote to — byte-for-byte, including for a non-ASCII product name — and
+that `lib/token_recorder.py` still parses the whole family's Claude-shaped
+transcripts.
+
+## Diagnostics
+
+### Enable debug mode
+
+```bash
+export ALIBABACLOUD_TELEMETRY_DEBUG=1
+# (optional) export ALIBABACLOUD_TELEMETRY_DRY_RUN=1   # don't actually upload
+```
+
+Tail the per-client log (paths are split per client, so the right one to
+watch depends on which agent host you're using):
+
+```bash
+tail -F ~/.cache/alibabacloud-agent-toolkit/telemetry/claude-code/debug.log
+```
+
+### Reading the log
+
+One structured line per hook fire. Common patterns:
+
+| Line                                                                                                | Meaning                                                                  |
+| --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `[pre] tool=Skill skill=alibabacloud-domain:foo decision=track session=…`                             | Pre captured a start timestamp                                           |
+| `[pre] tool=Read decision=skip reason=not-ours`                                                     | Pre ignored a non-`alibabacloud` tool call                               |
+| `[post] event_name=PostToolUse tool=Skill decision=upload event=skill_invocation status=success`    | Post classified and queued an upload                                     |
+| `[post] event_name=PostToolUseFailure tool=mcp__... decision=upload event=mcp_tool_use status=failure` | Post handled a failed MCP call routed to `PostToolUseFailure`         |
+| `[post] event_name=PostToolUse tool=Bash decision=reject reason=bash-not-aliyun cmd_head=ls`        | Post rejected a non-`aliyun` Bash call (with sanitized command head)     |
+| `[stop] turn=3 session=<id> client=claude-code`                                                     | Stop hook advanced the per-session turn counter                          |
+| `DRYRUN: queue telemetry event --…`                                                               | The upload arguments that would have been queued (DRY_RUN mode only)     |
+| `decision=opted-out`                                                                                | `ALIBABACLOUD_TELEMETRY=false` short-circuited the hook                  |
+
+### Reject reason vocabulary
+
+Recognised by `post_handler.py`:
+
+| Reason                          | Meaning                                                                                       |
+| ------------------------------- | --------------------------------------------------------------------------------------------- |
+| `opted-out`                     | `ALIBABACLOUD_TELEMETRY=false` set                                                            |
+| `empty-stdin`                   | hook fired with no payload (TTY or empty pipe)                                                |
+| `invalid-json`                  | stdin couldn't parse as JSON                                                                  |
+| `empty-tool-name`               | payload missing `tool_name`                                                                   |
+| `non-alibabacloud-skill`        | `Skill` tool but skill name doesn't start with `alibabacloud`                                 |
+| `non-alibabacloud-subagent`     | `Agent` tool but `subagent_type` doesn't start with `alibabacloud`                            |
+| `read-no-alibabacloud-segment`  | `Read` / `view` / `read_file` but file path doesn't contain `alibabacloud`                    |
+| `read-not-in-skills-path`       | `Read` etc. and path has `alibabacloud` segment but doesn't match the skills directory shape  |
+| `bash-not-aliyun`               | `Bash` tool but command doesn't start with `aliyun`                                           |
+| `unknown-tool`                  | tool name didn't match any case                                                               |
+
+### Diagnosing "events seem missing"
+
+1. Confirm the hook is registered: run `/hooks` in Claude Code; it should
+   list 5 entries (Pre, Post, PostFailure, Stop, StopFailure).
+2. Enable `ALIBABACLOUD_TELEMETRY_DEBUG=1`, reproduce, check the relevant
+   `debug.log`:
+   - **No lines at all for the call** → hook didn't fire. Check plugin
+     install / symlink (`bash tools/hooks/scripts/verify-symlinks.sh`).
+   - **`[pre]` but no `[post]`** → tool call still in flight, OR
+     `PostToolUseFailure` registration missing in `hooks.json`.
+   - **`[post] decision=reject reason=…`** → our filter intentionally
+     dropped this. The reason tells you why.
+   - **`[post] decision=upload` but nothing visible at the sink** → the event
+     was only queued. Check `<state-dir>/<client>/telemetry-queue/pending/`
+     for a backlog and `telemetry-queue/failed/` for dead letters, then rerun
+     the worker with `ALIBABACLOUD_TELEMETRY_WORKER_DEBUG=1` to see why
+     uploads are failing. Use `ALIBABACLOUD_TELEMETRY_DRY_RUN=1` to confirm
+     the arguments we would have queued.
+3. Inspect per-session state directly:
+
+   ```bash
+   python3 tools/hooks/scripts/lib/state.py show \
+       --client claude-code --session <session-id>
+   ```
+
+### Inspecting the raw hook payload
+
+If a field that should be present in the upload is missing (e.g.,
+`--tool-request-id` for an MCP call that visibly returned a RequestId),
+enable the raw-payload trace and reproduce:
+
+```bash
+export ALIBABACLOUD_TELEMETRY_TRACE_PAYLOAD=1
+# reproduce the call in Claude Code, then:
+ls -la ~/.cache/alibabacloud-agent-toolkit/telemetry/claude-code/raw-payloads/
+```
+
+Each file is the exact JSON Claude Code passed to the hook on stdin.
+Disable by `unset ALIBABACLOUD_TELEMETRY_TRACE_PAYLOAD` — it is opt-in.
+
+## Test harness
+
+| Script                                                | Purpose                                                                                                                                                        |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts/dry-run.sh <fixture> \| --all`               | Run a fixture (or all) through `lib/post_handler.py` (or `pre_handler.py` for `pre-*` stems), normalize timestamps, diff against `expected/<stem>.txt`. Used by CI. |
+| `scripts/verify-symlinks.sh`                          | Assert `plugins/*/hooks` resolve to `tools/hooks`.                                                                                                              |
+| `scripts/test-fixtures/stress-test.sh [N]`            | Fork N concurrent Stop hook invocations and assert the turn counter ends at exactly N (no lost increments). Default N=50.                                       |
+| `lib/sanitize.py` (run as script)                     | Execute self-tests for sanitization rules.                                                                                                                      |
+| `lib/state.py` (run as script)                        | CLI: `seed-marker --client X --session Y --key Z --ms N` (used by `dry-run.sh`), `cleanup --client X --max-age-days 7`, `show --client X --session Y`           |
+
+Fixtures live under `test-fixtures/claude-code/<stem>.json` paired with
+`test-fixtures/expected/<stem>.txt`. Fixtures whose stem starts with `pre-`
+route to `lib/pre_handler.py`; everything else to `lib/post_handler.py`. A
+fixture may have a sibling `<stem>.start` containing an integer epoch ms —
+when present, `dry-run.sh` seeds it as a `tool_starts[<key>]` marker before
+running the handler, so the handler computes a non-fallback duration.
+
+A `TIMING_ONLY` expected file means: pass if the handler exits within 5 s
+(no output diff). Used to validate the 64 KB stdin cap protects against
+pathological large payloads.
+
+## Phase 2 stubs
+
+Codex, the Qoder family and VS Code all ship a real manifest and a real
+detection branch, so `COPILOT_CLI` is the only marker still stubbed out.
+
+VS Code has one known coverage gap left: it reports its shell tool as
+`runTerminalCommand`, but `lib/post_handler.py:classify_with_reason()` only
+enters the aliyun-CLI and SKILL.md-read sub-classifiers on the literal name
+`Bash`, so `cli_command_use` and shell-borne `skill_invocation` are dropped on
+VS Code. Everything else still classifies: MCP tool calls match on the
+`alibabacloud` prefix in the server name, `UserPromptSubmit` is
+name-independent, and the file-read branch already accepts `read_file` next to
+`Read`.
+
+## Codex 安装与启用
+
+Codex 默认不开启插件 hooks。使用 `npx openplugin` 安装时会自动注册 Codex hooks。
+
+校验:用 `uvx alibabacloud.mcp-proxy@latest telemetry-view` 打开 viewer,确认 Codex session 出现且 client 字段为 "codex"。
+
+### `turn_end` 中的 token 字段(供 viewer 升级使用)
+
+每个 `turn_end` 事件(仅当本 turn 含阿里云相关活动时写入)携带:
+
+| 字段 | 含义 |
+|---|---|
+| `turn_tokens` | 本 turn 内所有 LLM 调用 token 之和 |
+| `aliyun_session_tokens` | 仅累加 traced turn 的 session 累计 |
+| `llm_calls` | `[ { call_index, model, ts, tool_use_ids, tool_span_ids, llm_tokens } ]` 每个元素 = 一次真正的 LLM 调用;`llm_tokens` 归属于该次调用本身,**不再**复制到它派生的每个工具 span 上 |
+| `tool_tokens` | (legacy) 旧版按工具 span 扇出的 token map。新版 hook 总是写入 `{}`,仅为向后兼容字段形状;旧 viewer 看到空 dict 后不再渲染重复数字,新 viewer 走 `llm_calls` 路径 |
+
+> 改动动因:旧的 `tool_tokens` 把同一次 LLM 调用的 token 复制到该调用派生出的每个并行 bash 上,导致 viewer 在按 skill 聚合时按工具数倍数放大(N 个并行 bash → 5× 放大)。新的 `llm_calls` 将 token 归到调用本身,viewer 沿调用的首个 tool span 回溯 skill 祖先,每次调用只计一次。
+>
+> Layer 2 的 skill 子树聚合不再由 hook 直接写入,改由 viewer 在渲染时通过 `compute_token_layers` 沿 parent 链回溯估算,并附 confidence 标记。
+
+token 数据来源于:
+
+- Claude Code:`transcript_path` 指向的 JSONL,按 `message.id` 去重 assistant 行的 `usage`。
+- Codex:`~/.codex/sessions/...` JSONL 中 `event_msg payload.type=token_count`,`info.last_token_usage` 作为单次。

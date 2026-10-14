@@ -60,6 +60,21 @@
       "name": "alibabacloud-opc",
       "source": "./plugins/alibabacloud-opc",
       "version": "0.0.2"
+    },
+    {
+      "category": "cloud",
+      "description": "Alibaba Cloud domain operations plugin providing DomainCLI-backed domain discovery, commerce, asset control, ICP filing, and Wanxiaozhi website workflows with confirmation and verification safeguards.",
+      "keywords": [
+        "alibabacloud",
+        "aliyun",
+        "domain",
+        "icp",
+        "website",
+        "domaincli"
+      ],
+      "name": "alibabacloud-domain",
+      "source": "./plugins/alibabacloud-domain",
+      "version": "0.0.1"
     }
   ]
 }

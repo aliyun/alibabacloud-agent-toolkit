@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "alibabacloud-domain": {
+      "command": "uvx",
+      "args": [
+        "alibabacloud.mcp-proxy@latest",
+        "--server-url",
+        "https://openapi-mcp.cn-hangzhou.aliyuncs.com/s/Domain/domain/2dd2d6410b8648938effea0a177280e6/mcp",
+        "--site-type",
+        "CN",
+        "--connect-timeout",
+        "30",
+        "--read-timeout",
+        "120",
+        "--retry-max-attempts",
+        "1",
+        "--allow-tools",
+        "check,price,whois,version",
+        "--safety-policy",
+        "domain:*=allow,*=deny"
+      ]
+    }
+  }
+}
