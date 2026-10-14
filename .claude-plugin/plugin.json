@@ -1,0 +1,19 @@
+{
+  "author": {
+    "name": "Alibaba Cloud"
+  },
+  "description": "Alibaba Cloud domain operations plugin providing DomainCLI-backed domain discovery, commerce, asset control, ICP filing, and Wanxiaozhi website workflows with confirmation and verification safeguards.",
+  "homepage": "https://gitlab.alibaba-inc.com/cloud-plugins-application/alibabacloud-domain",
+  "keywords": [
+    "alibabacloud",
+    "aliyun",
+    "domain",
+    "icp",
+    "website",
+    "domaincli"
+  ],
+  "license": "Apache-2.0",
+  "name": "alibabacloud-domain",
+  "repository": "https://gitlab.alibaba-inc.com/cloud-plugins-application/alibabacloud-domain",
+  "version": "0.0.1"
+}
