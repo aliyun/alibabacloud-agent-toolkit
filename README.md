@@ -140,6 +140,17 @@ To iterate on a local clone instead, register the plugin directory directly:
 }
 ```
 
+#### Neotask
+
+Install from [Neotask Construct](https://construct.neotask.ai/u/alibaba-cloud) with the Neotask CLI. The `alibabacloud-domain` plugin is listed as `alibabacloud-domain-plugin`:
+
+```text
+neotask construct install alibabacloud-core
+neotask construct install alibabacloud-spec-ops
+neotask construct install alibabacloud-ecs-ops
+neotask construct install alibabacloud-domain-plugin
+```
+
 ## Use Spec-Ops: Spec-Driven Workflow
 
 Want an expert-guided, spec-driven flow that takes "I need a web app on aliyun" all the way to live infrastructure? One command:
